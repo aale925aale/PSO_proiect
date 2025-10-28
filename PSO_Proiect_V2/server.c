@@ -39,7 +39,7 @@ void handle_connection(int *client_socket){
         perror("eroare la write");
         exit(-1);
     }
-    close(client_socket);
+    close(*client_socket);
 }
 
 
@@ -47,8 +47,8 @@ void* thread_function(void *arg){
     while(1){
         int* pclient;
         pthread_mutex_lock(&mutex);
-        pthread_cond_wait(&pclient, &mutex);
-        if( pclient = dequeue() == NULL) {
+        pthread_cond_wait(&condition_var, &mutex);
+        if( (pclient = dequeue()) == NULL) {
             pthread_cond_wait(&condition_var, &mutex);
             //try again
             pclient = dequeue();
@@ -102,6 +102,7 @@ int main(){
         perror("eroare la listen");
         exit(-1);
     }
+    printf("Asteptam conexiune...\n");
 
     // Acceptam n-conexiuni
     for(;;){
