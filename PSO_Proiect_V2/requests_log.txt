@@ -1,0 +1,50 @@
+=== POST Request ===
+Name: "name"
+
+asd
+------geckoformboundary4c0c4bec63b39c79d3981d8916dafcf0
+Content-Disposition: form-data; name="message"
+
+dad
+------geckoformboundary4c0c4bec63b39c79d3981d8916dafcf0--
+
+Message: Fără mesaj
+---------------------
+=== POST Request ===
+Name: "name"
+
+adsa
+------geckoformboundary1402aa45c64cf2a1c5079cc0b0e8510d
+Content-Disposition: form-data; name="message"
+
+ada
+------geckoformboundary1402aa45c64cf2a1c5079cc0b0e8510d--
+
+Message: Fără mesaj
+---------------------
+=== POST Request ===
+Client: 127.0.0.1
+Name: "name"
+
+sada
+------geckoformboundaryf3705bb60f9c38e8195748e753152001
+Content-Disposition: form-data; name="message"
+
+daa
+------geckoformboundaryf3705bb60f9c38e8195748e753152001--
+
+Message: Fără mesaj
+---------------------
+=== POST Request ===
+Client: 127.0.0.1
+Name: "name"
+
+asda
+------geckoformboundary74eba1c55e508181364c97215eb1c6fd
+Content-Disposition: form-data; name="message"
+
+asasf
+------geckoformboundary74eba1c55e508181364c97215eb1c6fd--
+
+Message: Fără mesaj
+---------------------

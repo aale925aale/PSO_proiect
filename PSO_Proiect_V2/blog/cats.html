@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+    <meta charset="UTF-8">
+    <title>Pisici Adorabile</title>
+    <link rel="stylesheet" href="/cats.css">
+</head>
+<body>
+    <h1>Pisici Adorabile</h1>
+    <p>Lasă un comentariu despre pisici!</p>
+
+    <div class="cat-container">
+        <img src="https://placekitten.com/250/250?image=1" alt="Pisica 1" class="cat">
+        <img src="https://placekitten.com/250/250?image=2" alt="Pisica 2" class="cat">
+        <img src="https://placekitten.com/250/250?image=3" alt="Pisica 3" class="cat">
+    </div>
+
+    <div class="form-container">
+        <form id="commentForm" action="/submit-comment" method="POST">
+            <input type="text" name="name" placeholder="Numele tău" required>
+            <textarea name="message" placeholder="Comentariul tău..." rows="4" required></textarea>
+            <button type="submit">Trimite Comentariu</button>
+        </form>
+    </div>
+
+    <div class="comments">
+        <h3>Comentarii:</h3>
+        <div id="comments-list"></div>
+    </div>
+
+    <br>
+    <a href="/" class="back-btn">Înapoi la pagina principală</a>
+
+    <script>
+        async function loadComments() {
+            const res = await fetch('/api/comments');
+            const comments = await res.json();
+            const list = document.getElementById('comments-list');
+            if (comments.length === 0) {
+                list.innerHTML = '<p style="color:#999; font-style:italic;">Încă nu sunt comentarii. Fii primul!</p>';
+                return;
+            }
+            list.innerHTML = comments.map(c => 
+                `<div class="comment"><strong>${c.name}</strong>: ${c.message}</div>`
+            ).join('');
+        }
+
+        document.getElementById('commentForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const form = e.target;
+            const data = new FormData(form);
+            await fetch('/submit-comment', { method: 'POST', body: data });
+            form.reset();
+            loadComments();
+        });
+
+        window.addEventListener('load', loadComments);
+    </script>
+</body>
+</html>

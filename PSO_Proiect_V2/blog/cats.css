@@ -1,0 +1,134 @@
+/* ========================================
+   CATS.CSS - STIL PENTRU PAGINA CU PISICI
+   ======================================== */
+
+   body {
+    background: linear-gradient(to bottom, #FFB6C1, #FF69B4);
+    font-family: 'Comic Sans MS', cursive, sans-serif;
+    color: #333;
+    text-align: center;
+    margin: 0;
+    padding: 40px;
+}
+
+h1 {
+    font-size: 3.5em;
+    color: #FF1493;
+    text-shadow: 2px 2px 4px rgba(255, 105, 180, 0.5);
+    margin-bottom: 20px;
+}
+
+p {
+    font-size: 1.3em;
+    color: #555;
+    margin-bottom: 30px;
+}
+
+/* ===== POZELE CU PISICI ===== */
+.cat-container {
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+    flex-wrap: wrap;
+    margin: 30px 0;
+}
+
+.cat {
+    width: 250px;
+    height: 250px;
+    border: 6px solid #FF69B4;
+    border-radius: 20px;
+    box-shadow: 0 6px 15px rgba(255, 105, 180, 0.4);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.cat:hover {
+    transform: scale(1.1);
+    box-shadow: 0 10px 25px rgba(255, 20, 147, 0.6);
+}
+
+/* ===== FORMULARUL ===== */
+.form-container {
+    background: white;
+    padding: 25px;
+    border-radius: 20px;
+    box-shadow: 0 8px 20px rgba(0,0,0,0.15);
+    max-width: 500px;
+    margin: 40px auto;
+}
+
+input[type="text"],
+textarea {
+    width: 100%;
+    padding: 12px;
+    margin: 10px 0;
+    border: 2px solid #FF69B4;
+    border-radius: 10px;
+    font-size: 1.1em;
+    font-family: inherit;
+    box-sizing: border-box;
+}
+
+textarea {
+    height: 100px;
+    resize: none;
+}
+
+button {
+    background: #4ECDC4;
+    color: white;
+    padding: 14px 32px;
+    font-size: 1.2em;
+    font-weight: bold;
+    border: none;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: background 0.3s ease;
+    margin-top: 10px;
+}
+
+button:hover {
+    background: #45B7AA;
+}
+
+/* ===== COMENTARII ===== */
+.comments {
+    background: #fff8f8;
+    padding: 20px;
+    border-radius: 15px;
+    max-width: 600px;
+    margin: 40px auto;
+    text-align: left;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+
+.comment {
+    background: white;
+    padding: 12px;
+    margin: 12px 0;
+    border-left: 5px solid #FF69B4;
+    border-radius: 8px;
+    font-size: 1.1em;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+}
+
+.comment strong {
+    color: #FF1493;
+}
+
+/* ===== BUTON ÎNAPOI ===== */
+.back-btn {
+    display: inline-block;
+    margin: 20px;
+    padding: 12px 28px;
+    background: #95E1D3;
+    color: white;
+    text-decoration: none;
+    border-radius: 12px;
+    font-weight: bold;
+    transition: background 0.3s ease;
+}
+
+.back-btn:hover {
+    background: #7AC7B8;
+}

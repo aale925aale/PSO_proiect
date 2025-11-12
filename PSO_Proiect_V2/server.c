@@ -17,28 +17,114 @@ pthread_t thread_pool[THREAD_POOL_SIZE];
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t condition_var = PTHREAD_COND_INITIALIZER;
 
+void handle_get(int client_fd, const char* path){
+    char fullpath[2048] = "default";
+    
+     // 3.1. Daca e doar "/", inlocuim cu pagina principala / default 
+     if(strcmp(path, "/") == 0){
+        strcpy(fullpath, "blog/index.html");
+    }
+    else{
+        // 3.2. Daca e o cale mai lunga, o cautam in folderul /blog/....
+        snprintf(fullpath, sizeof(fullpath), "blog%s", path);
+    }
+
+    printf("Full path: %s\n", fullpath);
+
+    // 4. Deschidem fisierul
+    FILE* file = fopen(fullpath, "r");
+    if(file == NULL){
+        // 4.1 Daca fisierul nu exista => eroare 404 Page Not Found
+        char raspuns_404[] = "HTTP/1.0 404 Not Found\r\n"
+                             "Server: webserver-c\r\n"
+                             "Content-type: text/html\r\n\r\n"
+                             "<html><body>404 Not Found</body></html>\r\n";
+        write(client_fd, raspuns_404, strlen(raspuns_404));
+    }
+    else {
+        // 4.2 Aflam lungimea fisierului
+        fseek(file, 0, SEEK_END);
+        long content_length = ftell(file);
+        fseek(file, 0, SEEK_SET);
+
+        // 4.3 Alocam buffer pentru continut
+        char *content = malloc(content_length + 1);
+        if (content == NULL) {
+            perror("eroare la malloc");
+            fclose(file);
+            close(client_fd);
+            return;
+        }
+        fread(content, 1, content_length, file);
+        content[content_length] = '\0';  
+
+        // Afla tipul fisierului
+        const char* mime = "text/html";
+        if (strstr(path, ".css"))  mime = "text/css";
+        if (strstr(path, ".js"))   mime = "application/javascript";
+        if (strstr(path, ".png"))  mime = "image/png";
+        if (strstr(path, ".jpg"))  mime = "image/jpeg";
+    
+
+        // 4.4 Construim header-ul
+        char header[BUFFER_SIZE];
+        snprintf(header, sizeof(header),
+                 "HTTP/1.0 200 OK\r\n"
+                 "Server: webserver-c\r\n"
+                 "Content-type: %s\r\n"
+                 "Content-Length: %ld\r\n\r\n",
+                 mime, content_length);
+
+        // 4.5 Trimitem header-ul
+        write(client_fd, header, strlen(header));
+
+        // 4.6 Trimitem conținutul
+        write(client_fd, content, content_length);
+
+        free(content);
+        fclose(file);
+    }
+}
+
+
 void handle_connection(int *client_socket){
     int client_fd = *client_socket;
     char buffer[BUFFER_SIZE];
-
-    char raspuns[] = "HTTP/1.0 200 OK\r\n"
-                  "Server: webserver-c\r\n"
-                  "Content-type: text/html\r\n\r\n"
-                  "<html>hello, world</html>\r\n";
-
     
+    // 1. CItim DIN socket IN buffer
     int valRead = read(client_fd, buffer, BUFFER_SIZE);
     if(valRead < 0){
         perror("eroare la read");
     }
+    buffer[valRead] = '\0';
 
-    printf("%s", buffer);
+    // 2. DIN buffer extragem METODA (GET, POST, PUT...) si CALEA.
+    char method[8], path[1024] = "";
+    sscanf(buffer, "%7s %1023s", method, path); 
 
-    int valWrite = write(client_fd, raspuns, strlen(raspuns));
-    if(valWrite < 0){
-        perror("eroare la write");
-        exit(-1);
+    // Găsim sfârșitul header-ului
+    char* body_start = strstr(buffer, "\r\n\r\n");
+    if (!body_start) {
+        // Fără body sau header incomplet
+        close(client_fd);
+        free(client_socket);
+        return;
     }
+    body_start += 4; // sare peste \r\n\r\n
+
+
+    // 3. Verificam TIPUL de metoda
+    if(strcmp(method, "GET") == 0){
+        printf("Clientul a cerut: %s\n", path);
+        handle_get(client_fd, path);
+    }
+    else if (strcmp(method, "POST") == 0) {
+        //aici functie de handle_post
+    }
+    else{
+        printf("Metoda %s nu e suportata", method);
+    }
+
     close(*client_socket);
 }
 
