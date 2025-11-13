@@ -1,7 +1,3 @@
-[eu] hello
-[euu] hellooo
-[nume] Ce dragut
-[Anonim] 
-[Anonim] 
-[Anonim] 
-[Anonim] 
+
+test|Imi place pagina!
+Radu cel frumos|Fain !!!

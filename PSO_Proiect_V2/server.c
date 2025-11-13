@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <pthread.h>
+#include <ctype.h>
 
 #include "myqueue.h"
 
@@ -86,6 +87,78 @@ void handle_get(int client_fd, const char* path){
     }
 }
 
+void urldecode(char *src, char *dest) {
+    char *p = src;
+    char code[3] = {0};
+    while (*p) {
+        if (*p == '+') {
+            *dest++ = ' ';
+        } else if (*p == '%' && isxdigit(*(p+1)) && isxdigit(*(p+2))) {
+            code[0] = *(p+1);
+            code[1] = *(p+2);
+            *dest++ = (char) strtol(code, NULL, 16);
+            p += 2;
+        } else {
+            *dest++ = *p;
+        }
+        p++;
+    }
+    *dest = '\0';
+}
+
+
+void handle_post(int client_fd, char *buffer) {
+    char path[1024] = "";
+    char username[100] = {0};
+    char message[1000] = {0};
+
+    sscanf(buffer, "POST %1023s", path);
+
+    char *data_start = strstr(buffer, "\r\n\r\n");
+    if (!data_start) return;
+    data_start += 4;
+
+    printf("BODY = [%s]\n", data_start);
+
+    int matched = sscanf(data_start,
+                         "username=%99[^&]&message=%999[^\r\n]",
+                         username, message);
+    printf("matched = %d\n", matched);
+    printf("Nume utilizator: %s\n", username);
+    printf("Mesaj: %s\n", message);
+
+    char username_dec[200];
+    char message_dec[1200];
+
+    urldecode(username, username_dec);
+    urldecode(message, message_dec);
+
+    // Aici salvam comentariile in fisier
+    FILE *f = fopen("blog/comments.txt", "a");  
+    if (!f) {
+        perror("Eroare la deschiderea comments.txt");
+    } else {
+        fprintf(f, "%s|%s\n", username_dec, message_dec);
+        fclose(f);
+        printf("Comentariu salvat in blog/comments.txt\n");
+    }
+
+    const char *body = "OK";
+    char response[256];
+    int len_body = strlen(body);
+    int len = snprintf(response, sizeof(response),
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: text/plain\r\n"
+        "Content-Length: %d\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+        "%s",
+        len_body, body);
+
+    write(client_fd, response, len);
+}
+
+
 
 void handle_connection(int *client_socket){
     int client_fd = *client_socket;
@@ -98,20 +171,9 @@ void handle_connection(int *client_socket){
     }
     buffer[valRead] = '\0';
 
-    // 2. DIN buffer extragem METODA (GET, POST, PUT...) si CALEA.
-    char method[8], path[1024] = "";
-    sscanf(buffer, "%7s %1023s", method, path); 
-
-    // Găsim sfârșitul header-ului
-    char* body_start = strstr(buffer, "\r\n\r\n");
-    if (!body_start) {
-        // Fără body sau header incomplet
-        close(client_fd);
-        free(client_socket);
-        return;
-    }
-    body_start += 4; // sare peste \r\n\r\n
-
+    // 2. DIN buffer extragem METODA (GET, POST, PUT...) CALEA si PROTOCOLUL HTTP.
+    char method[8], path[1024] = "", protocol[32];
+    sscanf(buffer, "%7s %1023s %31s", method, path, protocol); 
 
     // 3. Verificam TIPUL de metoda
     if(strcmp(method, "GET") == 0){
@@ -120,6 +182,7 @@ void handle_connection(int *client_socket){
     }
     else if (strcmp(method, "POST") == 0) {
         //aici functie de handle_post
+        handle_post(client_fd, buffer);
     }
     else{
         printf("Metoda %s nu e suportata", method);

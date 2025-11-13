@@ -16,8 +16,9 @@
     </div>
 
     <div class="form-container">
-        <form id="commentForm" action="/submit-comment" method="POST">
-            <input type="text" name="name" placeholder="Numele tău" required>
+        <!-- action/method nu mai conteaza, trimitem cu fetch -->
+        <form id="commentForm">
+            <input type="text" name="username" placeholder="Numele tău" required>
             <textarea name="message" placeholder="Comentariul tău..." rows="4" required></textarea>
             <button type="submit">Trimite Comentariu</button>
         </form>
@@ -40,18 +41,33 @@
                 list.innerHTML = '<p style="color:#999; font-style:italic;">Încă nu sunt comentarii. Fii primul!</p>';
                 return;
             }
-            list.innerHTML = comments.map(c => 
-                `<div class="comment"><strong>${c.name}</strong>: ${c.message}</div>`
+            list.innerHTML = comments.map(c =>
+                `<div class="comment"><strong>${c.username}</strong>: ${c.message}</div>`
             ).join('');
         }
 
         document.getElementById('commentForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
+            e.preventDefault(); // NU mai lasam browserul sa faca submit normal
+
             const form = e.target;
-            const data = new FormData(form);
-            await fetch('/submit-comment', { method: 'POST', body: data });
-            form.reset();
-            loadComments();
+            const formData = new FormData(form);
+            const body = new URLSearchParams(formData);  // => application/x-www-form-urlencoded
+
+            const res = await fetch('/submit-comment', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                },
+                body: body.toString()
+            });
+
+            if (!res.ok) {
+                console.error('Eroare la trimitere comentariu', await res.text());
+                return;
+            }
+
+            form.reset();   // golim formularul
+            loadComments(); // reîncarcam lista de comentarii
         });
 
         window.addEventListener('load', loadComments);
