@@ -19,7 +19,55 @@ pthread_t thread_pool[THREAD_POOL_SIZE];
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t condition_var = PTHREAD_COND_INITIALIZER;
 
+
+typedef struct {
+    char method[8];
+    char path[1024];
+    char protocol[32];
+
+    const char* headers;     // pointer in buffer, inceputul headerelor
+    const char* body;        // pointer in buffer, inceputul body-ului
+    size_t body_length;      // lungimea body-ului (pentru POST)
+} http_request_t;
+
+int parse_http_request(char* buffer, int length, http_request_t* req) {
+    // Ne asiguram ca avem terminator de sir
+    buffer[length] = '\0';
+
+    // Prima linie: metoda, cale, protocol
+    if (sscanf(buffer, "%7s %1023s %31s",
+               req->method, req->path, req->protocol) != 3) {
+        return -1; // request invalid
+    }
+
+    // Cautam inceputul headerelor (dupa prima linie)
+    char* p = strstr(buffer, "\r\n");
+    if (!p) {
+        req->headers = NULL;
+        req->body = NULL;
+        req->body_length = 0;
+        return 0;
+    }
+    p += 2; // sarim peste "\r\n"
+    req->headers = p;
+
+    // Cautam separatorul intre headere si body: "\r\n\r\n"
+    char* body_start = strstr(buffer, "\r\n\r\n");
+    if (body_start) {
+        body_start += 4; // sarim peste "\r\n\r\n"
+        req->body = body_start;
+        req->body_length = (buffer + length) - body_start;
+        if (req->body_length < 0) req->body_length = 0;
+    } else {
+        req->body = NULL;
+        req->body_length = 0;
+    }
+
+    return 0;
+}
+
 void send_501(int client_fd, const char* method) {
+    // 501 = Metoda HTTP nu e implementata
     char body[512];
     snprintf(body, sizeof(body),
         "<html>"
@@ -47,7 +95,101 @@ void send_501(int client_fd, const char* method) {
     send(client_fd, body, strlen(body), 0);
 }
 
-void handle_get(int client_fd, const char* path){
+void send_404(int client_fd, const char* path) {
+    // 404 = pagina cautata de client nu exista pe server
+    char body[512];
+    snprintf(body, sizeof(body),
+        "<html>"
+        "<head><title>404 Not Found</title></head>"
+        "<body style='font-family: Arial;'>"
+        "<h1>404 - Resursa %s nu a fost gasita</h1>"
+        "<p>Serverul HTTP nu a putut gasi fisierul cerut.</p>"
+        "</body>"
+        "</html>",
+        path
+    );
+
+    char header[256];
+    snprintf(header, sizeof(header),
+        "HTTP/1.1 404 Not Found\r\n"
+        "Content-Type: text/html\r\n"
+        "Content-Length: %zu\r\n"
+        "Connection: close\r\n"
+        "\r\n",
+        strlen(body)
+    );
+
+    send(client_fd, header, strlen(header), 0);
+    send(client_fd, body, strlen(body), 0);
+}
+
+void send_400(int client_fd) {
+    // 400 = format request invalid
+    const char* body =
+        "<html>"
+        "<head><title>400 Bad Request</title></head>"
+        "<body style='font-family: Arial;'>"
+        "<h1>400 - Cerere invalida</h1>"
+        "<p>Serverul nu poate procesa acest request deoarece formatul este invalid.</p>"
+        "</body>"
+        "</html>";
+
+    char header[256];
+    snprintf(header, sizeof(header),
+        "HTTP/1.1 400 Bad Request\r\n"
+        "Content-Type: text/html\r\n"
+        "Content-Length: %zu\r\n"
+        "Connection: close\r\n"
+        "\r\n",
+        strlen(body)
+    );
+
+    send(client_fd, header, strlen(header), 0);
+    send(client_fd, body, strlen(body), 0);
+}
+
+void send_200(int client_fd, const char* content_type, const char* body) {
+    // 200 = request procesat cu succes
+    char header[256];
+
+    snprintf(header, sizeof(header),
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: %s\r\n"
+        "Content-Length: %zu\r\n"
+        "Connection: close\r\n"
+        "\r\n",
+        content_type,
+        strlen(body)
+    );
+
+    // trimite header-ul
+    send(client_fd, header, strlen(header), 0);
+
+    // trimite body
+    send(client_fd, body, strlen(body), 0);
+}
+
+void send_200_raw(int client_fd, const char* content_type, const char* data, size_t length)
+{
+    // 200 raw = pt fisiere binare (imagini, css, js...)
+    char header[256];
+
+    snprintf(header, sizeof(header),
+    "HTTP/1.1 200 OK\r\n"
+    "Content-Type: %s\r\n"
+    "Content-Length: %zu\r\n"
+    "Connection: close\r\n"
+    "\r\n",
+    content_type,
+    length
+    );
+
+    send(client_fd, header, strlen(header), 0);
+    send(client_fd, data, length, 0);
+}
+
+void handle_get(int client_fd, const http_request_t* req){
+    const char* path = req->path;
     char fullpath[2048] = "default";
     
      // 3.1. Daca e doar "/", inlocuim cu pagina principala / default 
@@ -65,11 +207,8 @@ void handle_get(int client_fd, const char* path){
     FILE* file = fopen(fullpath, "r");
     if(file == NULL){
         // 4.1 Daca fisierul nu exista => eroare 404 Page Not Found
-        char raspuns_404[] = "HTTP/1.0 404 Not Found\r\n"
-                             "Server: webserver-c\r\n"
-                             "Content-type: text/html\r\n\r\n"
-                             "<html><body>404 Not Found</body></html>\r\n";
-        write(client_fd, raspuns_404, strlen(raspuns_404));
+        send_404(client_fd, req->path);
+        return;
     }
     else {
         // 4.2 Aflam lungimea fisierului
@@ -95,21 +234,8 @@ void handle_get(int client_fd, const char* path){
         if (strstr(path, ".png"))  mime = "image/png";
         if (strstr(path, ".jpg"))  mime = "image/jpeg";
     
-
-        // 4.4 Construim header-ul
-        char header[BUFFER_SIZE];
-        snprintf(header, sizeof(header),
-                 "HTTP/1.0 200 OK\r\n"
-                 "Server: webserver-c\r\n"
-                 "Content-type: %s\r\n"
-                 "Content-Length: %ld\r\n\r\n",
-                 mime, content_length);
-
-        // 4.5 Trimitem header-ul
-        write(client_fd, header, strlen(header));
-
-        // 4.6 Trimitem continutul
-        write(client_fd, content, content_length);
+        // 4.4 Trimitem raspunsul complet (header + body)
+        send_200_raw(client_fd, mime, content, content_length);
 
         free(content);
         fclose(file);
@@ -135,18 +261,21 @@ void urldecode(char *src, char *dest) {
     *dest = '\0';
 }
 
-void handle_post(int client_fd, char *buffer) {
-    char path[1024] = "";
-    char username[100] = {0};
-    char message[1000] = {0};
+void handle_post(int client_fd, const http_request_t* req) {
+    const char* path = req->path; 
+    const char* data_start = req->body;
 
-    sscanf(buffer, "POST %1023s", path);
 
-    char *data_start = strstr(buffer, "\r\n\r\n");
-    if (!data_start) return;
-    data_start += 4;
+    if (!data_start) {
+        fprintf(stderr, "POST fara body.\n");
+        send_400(client_fd);
+        return;
+    }
 
     printf("BODY = [%s]\n", data_start);
+
+    char username[100] = {0};
+    char message[1000] = {0};
 
     int matched = sscanf(data_start,
                          "username=%99[^&]&message=%999[^\r\n]",
@@ -161,7 +290,6 @@ void handle_post(int client_fd, char *buffer) {
     urldecode(username, username_dec);
     urldecode(message, message_dec);
 
-    // Aici salvam comentariile in fisier
     FILE *f = fopen("blog/comments.txt", "a");  
     if (!f) {
         perror("Eroare la deschiderea comments.txt");
@@ -171,19 +299,8 @@ void handle_post(int client_fd, char *buffer) {
         printf("Comentariu salvat in blog/comments.txt\n");
     }
 
-    const char *body = "OK";
-    char response[256];
-    int len_body = strlen(body);
-    int len = snprintf(response, sizeof(response),
-        "HTTP/1.1 200 OK\r\n"
-        "Content-Type: text/plain\r\n"
-        "Content-Length: %d\r\n"
-        "Connection: close\r\n"
-        "\r\n"
-        "%s",
-        len_body, body);
-
-    write(client_fd, response, len);
+    // raspuns simplu de success
+    send_200(client_fd, "text/plain", "OK");
 }
 
 
@@ -192,7 +309,7 @@ void handle_connection(int *client_socket){
     char buffer[BUFFER_SIZE];
     
     // 1. CItim DIN socket IN buffer
-    int valRead = read(client_fd, buffer, BUFFER_SIZE);
+    int valRead = read(client_fd, buffer, BUFFER_SIZE - 1);
     if(valRead < 0){
         perror("eroare la read");
         close(client_fd);
@@ -201,45 +318,45 @@ void handle_connection(int *client_socket){
     buffer[valRead] = '\0';
 
     // 2. DIN buffer extragem METODA (GET, POST, PUT...) CALEA si PROTOCOLUL HTTP.
-    char method[8], path[1024] = "", protocol[32];
-    sscanf(buffer, "%7s %1023s %31s", method, path, protocol); 
+    http_request_t req;
+    if (parse_http_request(buffer, valRead, &req) != 0) {
+        fprintf(stderr, "Request HTTP invalid.\n");
+        send_400(client_fd);
+        close(client_fd);
+        return;
+    }
 
 
-      // 2.1. Stabilim prioritatea pe baza metodei / caii
-      priority_t prio;
+    // 2.1. Stabilim prioritatea pe baza metodei / caii
+    priority_t prio;
 
-      if (strcmp(method, "POST") == 0) {
-          // de exemplu, POST = HIGH
-          prio = PRIORITY_HIGH;
-      } else if (strcmp(method, "GET") == 0) {
-          // GET = MEDIUM
-          prio = PRIORITY_MEDIUM;
-      } else {
-          // restul = LOW
-          prio = PRIORITY_LOW;
-      }
+    if (strcmp(req.method, "POST") == 0) {
+         prio = PRIORITY_HIGH;
+     } else if (strcmp(req.method, "GET") == 0) {
+           prio = PRIORITY_MEDIUM;
+     } else {
+         prio = PRIORITY_LOW;
+     }
   
-      // 2.2. Afisam request + prioritate
-      printf("[THREAD %lu] Request %s %s cu prioritatea %s (client fd = %d)\n",
-             pthread_self(),
-             method,
-             path,
-             priority_to_string(prio),
-             client_fd);
+    // 2.2. Afisam request + prioritate
+    printf("[THREAD %lu] Request %s %s cu prioritatea %s (client fd = %d)\n",
+        pthread_self(),
+        req.method,
+        req.path,
+        priority_to_string(prio),
+        client_fd);
 
     // 3. Verificam TIPUL de metoda
-    if(strcmp(method, "GET") == 0){
-        printf("Clientul a cerut: %s\n", path);
-        handle_get(client_fd, path);
+    if(strcmp(req.method, "GET") == 0){
+        printf("Clientul a cerut: %s\n", req.path);
+        handle_get(client_fd, &req);
     }
-    else if (strcmp(method, "POST") == 0) {
-        //aici functie de handle_post
-        handle_post(client_fd, buffer);
+    else if (strcmp(req.method, "POST") == 0) {
+           handle_post(client_fd, &req);
     }
     else{
-        fprintf(stderr, "Metoda %s nu e suportata\n", method);
-
-        send_501(client_fd, method);
+        fprintf(stderr, "Metoda %s nu e suportata\n", req.method);
+        send_501(client_fd, req.method);
     }
 
     close(*client_socket);
@@ -247,27 +364,30 @@ void handle_connection(int *client_socket){
 
 
 void* thread_function(void *arg){
-    queue_item_t item;
+    while (1) {
+        queue_item_t item;
 
-    pthread_mutex_lock(&mutex);
-    while (queue_is_empty()) {
-        pthread_cond_wait(&condition_var, &mutex);
+        pthread_mutex_lock(&mutex);
+        while (queue_is_empty()) {
+            pthread_cond_wait(&condition_var, &mutex);
+        }
+        item = dequeue();
+        pthread_mutex_unlock(&mutex);
+        
+        if (item.client_socket != NULL) {
+            //afisez prioritatea
+            printf("[THREAD %lu] Execut request cu prioritatea %d pentru client %d\n",
+                   pthread_self(),
+                   item.priority,
+                   *(item.client_socket));
+
+            handle_connection(item.client_socket);
+
+            free(item.client_socket); 
+        }
     }
-    item = dequeue();
-    pthread_mutex_unlock(&mutex);
-    
-    if (item.client_socket != NULL) {
-    
-        // aici afisez prioritatea
-        printf("[THREAD %lu] Execut request cu prioritatea %d pentru client %d\n",
-               pthread_self(),
-               item.priority,
-               *(item.client_socket));
-    
-        handle_connection(item.client_socket);
-    }
+    return NULL;
 }
-
 int main(){
 
     // Cream threadu-urile ca sa se ocupe de viitoarele conexiuni
