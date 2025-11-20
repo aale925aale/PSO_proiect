@@ -7,6 +7,7 @@
 #include <string.h>
 #include <pthread.h>
 #include <ctype.h>
+#include <sys/time.h>
 
 #include "myqueue.h"
 
@@ -17,6 +18,34 @@
 pthread_t thread_pool[THREAD_POOL_SIZE];
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t condition_var = PTHREAD_COND_INITIALIZER;
+
+void send_501(int client_fd, const char* method) {
+    char body[512];
+    snprintf(body, sizeof(body),
+        "<html>"
+        "<head><title>501 Not Implemented</title></head>"
+        "<body style='font-family: Arial;'>"
+        "<h1>501 - Metoda %s nu este implementata</h1>"
+        "<p>Serverul HTTP nu suporta aceasta metoda.</p>"
+        "</body>"
+        "</html>",
+        method
+    );
+
+    char header[256];
+    snprintf(header, sizeof(header),
+        "HTTP/1.1 501 Not Implemented\r\n"
+        "Content-Type: text/html\r\n"
+        "Content-Length: %zu\r\n"
+        "Connection: close\r\n"
+        "\r\n",
+        strlen(body)
+    );
+
+    // trimitem header + body
+    send(client_fd, header, strlen(header), 0);
+    send(client_fd, body, strlen(body), 0);
+}
 
 void handle_get(int client_fd, const char* path){
     char fullpath[2048] = "default";
@@ -79,7 +108,7 @@ void handle_get(int client_fd, const char* path){
         // 4.5 Trimitem header-ul
         write(client_fd, header, strlen(header));
 
-        // 4.6 Trimitem conținutul
+        // 4.6 Trimitem continutul
         write(client_fd, content, content_length);
 
         free(content);
@@ -105,7 +134,6 @@ void urldecode(char *src, char *dest) {
     }
     *dest = '\0';
 }
-
 
 void handle_post(int client_fd, char *buffer) {
     char path[1024] = "";
@@ -159,7 +187,6 @@ void handle_post(int client_fd, char *buffer) {
 }
 
 
-
 void handle_connection(int *client_socket){
     int client_fd = *client_socket;
     char buffer[BUFFER_SIZE];
@@ -168,12 +195,37 @@ void handle_connection(int *client_socket){
     int valRead = read(client_fd, buffer, BUFFER_SIZE);
     if(valRead < 0){
         perror("eroare la read");
+        close(client_fd);
+        return;
     }
     buffer[valRead] = '\0';
 
     // 2. DIN buffer extragem METODA (GET, POST, PUT...) CALEA si PROTOCOLUL HTTP.
     char method[8], path[1024] = "", protocol[32];
     sscanf(buffer, "%7s %1023s %31s", method, path, protocol); 
+
+
+      // 2.1. Stabilim prioritatea pe baza metodei / caii
+      priority_t prio;
+
+      if (strcmp(method, "POST") == 0) {
+          // de exemplu, POST = HIGH
+          prio = PRIORITY_HIGH;
+      } else if (strcmp(method, "GET") == 0) {
+          // GET = MEDIUM
+          prio = PRIORITY_MEDIUM;
+      } else {
+          // restul = LOW
+          prio = PRIORITY_LOW;
+      }
+  
+      // 2.2. Afisam request + prioritate
+      printf("[THREAD %lu] Request %s %s cu prioritatea %s (client fd = %d)\n",
+             pthread_self(),
+             method,
+             path,
+             priority_to_string(prio),
+             client_fd);
 
     // 3. Verificam TIPUL de metoda
     if(strcmp(method, "GET") == 0){
@@ -185,7 +237,9 @@ void handle_connection(int *client_socket){
         handle_post(client_fd, buffer);
     }
     else{
-        printf("Metoda %s nu e suportata", method);
+        fprintf(stderr, "Metoda %s nu e suportata\n", method);
+
+        send_501(client_fd, method);
     }
 
     close(*client_socket);
@@ -193,21 +247,24 @@ void handle_connection(int *client_socket){
 
 
 void* thread_function(void *arg){
-    while(1){
-        int* pclient;
-        pthread_mutex_lock(&mutex);
-        pthread_cond_wait(&condition_var, &mutex);
-        if( (pclient = dequeue()) == NULL) {
-            pthread_cond_wait(&condition_var, &mutex);
-            //try again
-            pclient = dequeue();
-       }
-        pthread_mutex_unlock(&mutex);
+    queue_item_t item;
 
-        if(pclient != NULL){
-            //AVem o conexiune
-            handle_connection(pclient);
-        }
+    pthread_mutex_lock(&mutex);
+    while (queue_is_empty()) {
+        pthread_cond_wait(&condition_var, &mutex);
+    }
+    item = dequeue();
+    pthread_mutex_unlock(&mutex);
+    
+    if (item.client_socket != NULL) {
+    
+        // aici afisez prioritatea
+        printf("[THREAD %lu] Execut request cu prioritatea %d pentru client %d\n",
+               pthread_self(),
+               item.priority,
+               *(item.client_socket));
+    
+        handle_connection(item.client_socket);
     }
 }
 
@@ -271,12 +328,24 @@ int main(){
         }
 
         // Punem conexiunea undeva unde thread-urile sa o poata gasi (intr-o coada)
-        int *pclient = malloc(sizeof(int));
+        int* pclient = malloc(sizeof(int));
         *pclient = newSock_fd;
+
+        priority_t prio = PRIORITY_MEDIUM; // default, sau calculat in functie de metoda / path etc.
+
         pthread_mutex_lock(&mutex);
-        enqueue(pclient);
+        enqueue(pclient, prio);
         pthread_cond_signal(&condition_var);
         pthread_mutex_unlock(&mutex);
+
+
+
+        // int *pclient = malloc(sizeof(int));
+        // *pclient = newSock_fd;
+        // pthread_mutex_lock(&mutex);
+        // enqueue(pclient);
+        // pthread_cond_signal(&condition_var);
+        // pthread_mutex_unlock(&mutex);
 
     }
 
