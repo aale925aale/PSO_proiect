@@ -159,6 +159,72 @@ void handle_post(int client_fd, char *buffer) {
 }
 
 
+<<<<<<< Updated upstream
+=======
+//to do req tale handle head si handle options - facut
+
+// head este ca get, dar trimite doar header ele, fara body
+
+void handle_head(int client_fd, const http_request_t* req) {
+    const char* path = req->path;
+    char fullpath[2048] = "default";
+
+    // 1 daca utilizatorul cere doar "/"
+    if(strcmp(path, "/") == 0){
+        strcpy(fullpath, "blog/index.html");
+    }
+    else{
+        snprintf(fullpath, sizeof(fullpath), "blog%s", path);
+    }
+
+    printf("HEAD full path: %s\n", fullpath);
+
+    // 2 deschidem fisierul
+    FILE* file = fopen(fullpath, "r");
+    if(file == NULL) {
+        // daca fisierul nu exista
+        send_404(client_fd, req->path);
+        return;
+    }
+
+    // 3 aflam dimensiunea fisierului
+    fseek(file, 0, SEEK_END);
+    long content_length = ftell(file);
+    fclose(file);
+
+    // 4 determinam MIME-ul
+    const char* mime = "text/html";
+    if (strstr(path, ".css"))  mime = "text/css";
+    if (strstr(path, ".js"))   mime = "application/javascript";
+    if (strstr(path, ".png"))  mime = "image/png";
+    if (strstr(path, ".jpg"))  mime = "image/jpeg";
+
+    // 5 trimitem DOAR header-ele
+    dprintf(client_fd,
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: %s\r\n"
+        "Content-Length: %ld\r\n"
+        "\r\n",
+        mime, content_length
+    );
+}
+ 
+
+void handle_options(int client_fd, const http_request_t* req) {
+    (void)req; // nu folosim req aici, dar pastram semnatura
+
+    printf("Handling OPTIONS request\n");
+
+    // Trimitem raspuns 200 OK cu metodele acceptate
+    dprintf(client_fd,
+        "HTTP/1.1 200 OK\r\n"
+        "Allow: GET, POST, HEAD, OPTIONS\r\n"
+        "Content-Length: 0\r\n"
+        "\r\n"
+    );
+}
+
+>>>>>>> Stashed changes
 
 void handle_connection(int *client_socket){
     int client_fd = *client_socket;
@@ -172,6 +238,7 @@ void handle_connection(int *client_socket){
     buffer[valRead] = '\0';
 
     // 2. DIN buffer extragem METODA (GET, POST, PUT...) CALEA si PROTOCOLUL HTTP.
+<<<<<<< Updated upstream
     char method[8], path[1024] = "", protocol[32];
     sscanf(buffer, "%7s %1023s %31s", method, path, protocol); 
 
@@ -186,6 +253,64 @@ void handle_connection(int *client_socket){
     }
     else{
         printf("Metoda %s nu e suportata", method);
+=======
+    http_request_t req;
+    if (parse_http_request(buffer, valRead, &req) != 0) {
+        fprintf(stderr, "Request HTTP invalid.\n");
+        send_400(client_fd);
+        close(client_fd);
+        return;
+    }
+
+
+    // 2.1. Stabilim prioritatea pe baza metodei / caii
+    priority_t prio;
+
+    // TO DO - PT HEAD, OPTIONS (2 else if uri) - facut
+    if (strcmp(req.method, "POST") == 0) {
+        prio = PRIORITY_HIGH;
+    } 
+    else if (strcmp(req.method, "GET") == 0) {
+        prio = PRIORITY_MEDIUM;
+    }
+    else if (strcmp(req.method, "HEAD") == 0) {
+        prio = PRIORITY_MEDIUM;
+    }
+    else if (strcmp(req.method, "OPTIONS") == 0) {
+        prio = PRIORITY_LOW;
+    }
+    else {
+        prio = PRIORITY_LOW;
+    }
+  
+    // 2.2. Afisam request + prioritate
+    printf("[THREAD %lu] Request %s %s cu prioritatea %s (client fd = %d)\n",
+        pthread_self(),
+        req.method,
+        req.path,
+        priority_to_string(prio),
+        client_fd);
+
+    // 3. Verificam TIPUL de metoda
+
+    // to do : 2 else if uri pt head si options - facut
+    if(strcmp(req.method, "GET") == 0){
+        printf("Clientul a cerut: %s\n", req.path);
+        handle_get(client_fd, &req);
+    }
+    else if (strcmp(req.method, "POST") == 0) {
+        handle_post(client_fd, &req);
+    }
+    else if (strcmp(req.method, "HEAD") == 0) {
+        handle_head(client_fd, &req);
+    }
+    else if (strcmp(req.method, "OPTIONS") == 0) {
+        handle_options(client_fd, &req);
+    } 
+    else {
+        fprintf(stderr, "Metoda %s nu e suportata\n", req.method);
+        send_501(client_fd, req.method);
+>>>>>>> Stashed changes
     }
 
     close(*client_socket);

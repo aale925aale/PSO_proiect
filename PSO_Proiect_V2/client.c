@@ -16,14 +16,16 @@
 
 int connect_to_host(const char *host, int port) {
     struct addrinfo hints, *res, *p;
-    char port_str[6];
+    // addrinfo e o structura folosita de getaddrinfo() pt a obtine adresa ip
+    char port_str[6]; // situl text al portului, de ex 8080
     int sock = -1;
 
     memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-    snprintf(port_str, sizeof(port_str), "%d", port);
+    hints.ai_family = AF_UNSPEC; // af_unspec permite ipv4 sau ipv6
+    hints.ai_socktype = SOCK_STREAM; // sock_stream inseamna conexiune TCP
+    snprintf(port_str, sizeof(port_str), "%d", port); // converteste nr portului intr un sir
 
+    //rezolva adresa serverului
     if (getaddrinfo(host, port_str, &hints, &res) != 0) {
         perror("getaddrinfo");
         return -1;

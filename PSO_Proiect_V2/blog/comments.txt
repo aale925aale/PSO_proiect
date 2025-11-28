@@ -2,3 +2,16 @@
 test|Imi place pagina!
 Radu cel frumos|Fain !!!
 nume11|comentariu !!!???
+<<<<<<< Updated upstream
+=======
+numele meu|aici e comm ul meu
+test1|comm1
+test|test
+ana|salut
+ana|salut
+name name|comm comm
+asda|ada
+adas|adsa
+den|like likr
+|
+>>>>>>> Stashed changes
