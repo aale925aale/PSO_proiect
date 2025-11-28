@@ -266,8 +266,8 @@ void handle_post(int client_fd, const http_request_t* req) {
     const char* data_start = req->body;
 
 
-    if (!data_start) {
-        fprintf(stderr, "POST fara body.\n");
+    if (data_start == NULL || req->body_length == 0) {
+        fprintf(stderr, "POST fara body sau body gol.\n");
         send_400(client_fd);
         return;
     }
