@@ -8,6 +8,7 @@
 #include <pthread.h>
 #include <ctype.h>
 #include <sys/time.h>
+#include <time.h>
 
 #include "myqueue.h"
 
@@ -15,10 +16,14 @@
 #define BUFFER_SIZE 1024
 #define THREAD_POOL_SIZE 20
 
+
 pthread_t thread_pool[THREAD_POOL_SIZE];
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t condition_var = PTHREAD_COND_INITIALIZER;
 
+// Adaug un mutex pentru log-urile de pe server
+FILE* log_file;
+pthread_mutex_t log_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 typedef struct {
     char method[8];
@@ -66,6 +71,88 @@ int parse_http_request(char* buffer, int length, http_request_t* req) {
     return 0;
 }
 
+// ======= functii pentru log-uri server =========
+static void get_timestamp(char *out, size_t out_sz)
+{
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+
+    struct tm tm_info;
+    localtime_r(&tv.tv_sec, &tm_info);
+
+    // format: YYYY-MM-DD HH:MM:SS.mmm
+    snprintf(out, out_sz,
+             "%04d-%02d-%02d %02d:%02d:%02d.%03ld",
+             tm_info.tm_year + 1900,
+             tm_info.tm_mon + 1,
+             tm_info.tm_mday,
+             tm_info.tm_hour,
+             tm_info.tm_min,
+             tm_info.tm_sec,
+             tv.tv_usec / 1000);
+}
+
+static void log_request_line(int client_fd, const http_request_t *req, int status_code, long bytes_sent)
+{
+    if (!log_file) return;
+
+    // afla IP/port client (peer)
+    struct sockaddr_in peer;
+    socklen_t peer_len = sizeof(peer);
+    char ip[INET_ADDRSTRLEN] = "unknown";
+    int port = 0;
+
+    if (getpeername(client_fd, (struct sockaddr *)&peer, &peer_len) == 0) {
+        inet_ntop(AF_INET, &peer.sin_addr, ip, sizeof(ip));
+        port = ntohs(peer.sin_port);
+    }
+
+    char ts[64];
+    get_timestamp(ts, sizeof(ts));
+
+    pthread_mutex_lock(&log_mutex);
+    fprintf(log_file,
+            "%s | tid=%lu | %s:%d | %s %s %s | status=%d | bytes=%ld\n",
+            ts,
+            (unsigned long)pthread_self(),
+            ip, port,
+            req->method, req->path, req->protocol,
+            status_code,
+            bytes_sent);
+    fflush(log_file);
+    pthread_mutex_unlock(&log_mutex);
+}
+
+static void log_simple(int client_fd, const char *msg)
+{
+    if (!log_file) return;
+
+    struct sockaddr_in peer;
+    socklen_t peer_len = sizeof(peer);
+    char ip[INET_ADDRSTRLEN] = "unknown";
+    int port = 0;
+
+    if (getpeername(client_fd, (struct sockaddr *)&peer, &peer_len) == 0) {
+        inet_ntop(AF_INET, &peer.sin_addr, ip, sizeof(ip));
+        port = ntohs(peer.sin_port);
+    }
+
+    char ts[64];
+    get_timestamp(ts, sizeof(ts));
+
+    pthread_mutex_lock(&log_mutex);
+    fprintf(log_file,
+            "%s | tid=%lu | %s:%d | %s\n",
+            ts,
+            (unsigned long)pthread_self(),
+            ip, port,
+            msg);
+    fflush(log_file);
+    pthread_mutex_unlock(&log_mutex);
+}
+
+
+// ======== functii pentru coduri de eroare ==========
 void send_501(int client_fd, const char* method) {
     // 501 = Metoda HTTP nu e implementata
     char body[512];
@@ -93,6 +180,11 @@ void send_501(int client_fd, const char* method) {
     // trimitem header + body
     send(client_fd, header, strlen(header), 0);
     send(client_fd, body, strlen(body), 0);
+
+    char msg[256];
+    snprintf(msg, sizeof(msg), "RESP 501 Not Implemented method=%s", method);
+    log_simple(client_fd, msg);
+
 }
 
 void send_404(int client_fd, const char* path) {
@@ -121,6 +213,10 @@ void send_404(int client_fd, const char* path) {
 
     send(client_fd, header, strlen(header), 0);
     send(client_fd, body, strlen(body), 0);
+
+    char msg[1400];
+    snprintf(msg, sizeof(msg), "RESP 404 Not Found path=%s", path);
+    log_simple(client_fd, msg);
 }
 
 void send_400(int client_fd) {
@@ -146,6 +242,9 @@ void send_400(int client_fd) {
 
     send(client_fd, header, strlen(header), 0);
     send(client_fd, body, strlen(body), 0);
+
+    log_simple(client_fd, "RESP 400 Bad Request");
+
 }
 
 void send_200(int client_fd, const char* content_type, const char* body) {
@@ -167,6 +266,8 @@ void send_200(int client_fd, const char* content_type, const char* body) {
 
     // trimite body
     send(client_fd, body, strlen(body), 0);
+
+    log_simple(client_fd, "RESP 200 OK (text)");
 }
 
 void send_200_raw(int client_fd, const char* content_type, const char* data, size_t length)
@@ -186,8 +287,15 @@ void send_200_raw(int client_fd, const char* content_type, const char* data, siz
 
     send(client_fd, header, strlen(header), 0);
     send(client_fd, data, length, 0);
+
+    char msg[256];
+    snprintf(msg, sizeof(msg), "RESP 200 OK (raw) len=%zu type=%s", length, content_type);
+    log_simple(client_fd, msg);
+
 }
 
+
+// =========== functii pentru tipurile de request ============
 void handle_get(int client_fd, const http_request_t* req){
     const char* path = req->path;
     char fullpath[2048] = "default";
@@ -304,6 +412,7 @@ void handle_post(int client_fd, const http_request_t* req) {
 }
 
 
+// ============ functie pentru gestionare conexiune + requesturi ================
 void handle_connection(int *client_socket){
     int client_fd = *client_socket;
     char buffer[BUFFER_SIZE];
@@ -322,9 +431,12 @@ void handle_connection(int *client_socket){
     if (parse_http_request(buffer, valRead, &req) != 0) {
         fprintf(stderr, "Request HTTP invalid.\n");
         send_400(client_fd);
+        log_simple(client_fd, "400 Bad Request (parse_http_request failed)");
         close(client_fd);
         return;
     }
+
+    log_request_line(client_fd, &req, 0, 0); // status 0 = doar “received”
 
 
     // 2.1. Stabilim prioritatea pe baza metodei / caii
@@ -388,7 +500,18 @@ void* thread_function(void *arg){
     }
     return NULL;
 }
+
 int main(){
+
+    // Deschidem fisierul de log
+    log_file = fopen("server.log", "a");
+    if (!log_file) {
+        perror("eroare fopen server.log");
+        // nu iesim neaparat; serverul poate rula si fara log
+    } else {
+        setvbuf(log_file, NULL, _IOLBF, 0); // line-buffered (mai safe la crash)
+    }
+
 
     // Cream threadu-urile ca sa se ocupe de viitoarele conexiuni
     for(int i = 0; i < THREAD_POOL_SIZE; i++){
