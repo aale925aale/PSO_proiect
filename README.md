@@ -7,9 +7,10 @@ SERVER:
   5. Serverul executa cererile clientilor IN FUNCTIE DE PRIORITATEA LOR (asignăm o prioritate în funcție de tipul de request = cozi de priorități).
   6. Tratarea cazurilor în care o cerere nu exista (404...) sau răspunsuri afirmative (200 - OK), în format HTTP.
   7. Salvarea datelor primite de la client în fișiere.
+  8. Jurnalizarea activitatii pe server intr-un fisier de log-uri.
 
 CLIENTUL:
-  1. Sa poata cere fisiere cu anumite drepturi de la server (citire, scriere...) //// rămâne de văzut dacă mai facem asta, adică să avem useri cu privilegii
-  2. Clientul poate trimite diferite tipuri de cereri catre server (GET,POST,PUT)
-  3. Fiecare client care se conecteaza la server poate fi tratat separat, pt ca mai multi clienti sa poata folosi serverul in acelasi timp, fara sa se blocheze (procese / threaduri)
-     
+  1. Clientul poate trimite diferite tipuri de cereri catre server (GET,POST,OPTIONS)
+  2. Fiecare client care se conecteaza la server poate fi tratat separat, pt ca mai multi clienti sa poata folosi serverul in acelasi timp, fara sa se blocheze (procese / threaduri)
+  3. Proprietatea de autentificare user
+  4. Inerfata grafica pentru useri
