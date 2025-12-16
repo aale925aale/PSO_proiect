@@ -9,12 +9,17 @@
 #include <ctype.h>
 #include <sys/time.h>
 #include <time.h>
+#include <strings.h>
 
 #include "myqueue.h"
 
 #define PORT 8080
 #define BUFFER_SIZE 1024
 #define THREAD_POOL_SIZE 20
+
+#define MAX_HEADER_SIZE (16 * 1024)
+#define MAX_BODY_SIZE   (256 * 1024)
+#define MAX_REQUEST_SIZE (MAX_HEADER_SIZE + MAX_BODY_SIZE)
 
 
 pthread_t thread_pool[THREAD_POOL_SIZE];
@@ -295,9 +300,52 @@ void send_200_raw(int client_fd, const char* content_type, const char* data, siz
 }
 
 
+
+// ======== Detectam cale nesigura (ca sa nu poata fi accesate fisierele sistemului) ==========
+static void urldecode_path(const char *src, char *dest, size_t dest_sz)
+{
+    size_t di = 0;
+    for (size_t si = 0; src[si] != '\0' && di + 1 < dest_sz; si++) {
+        if (src[si] == '%' && isxdigit((unsigned char)src[si+1]) && isxdigit((unsigned char)src[si+2])) {
+            char code[3] = { src[si+1], src[si+2], 0 };
+            dest[di++] = (char)strtol(code, NULL, 16);
+            si += 2;
+        } else {
+            dest[di++] = src[si];
+        }
+    }
+    dest[di] = '\0';
+}
+
+static int is_path_unsafe(const char *raw_path)
+{
+    // extragem info de interes din "header-ul" http
+    char decoded[2048];
+    urldecode_path(raw_path, decoded, sizeof(decoded));
+
+    // trebuie sa inceapa cu slash '/'
+    if (decoded[0] != '/') return 1;
+
+    // blocam backslash (\\)
+    if (strchr(decoded, '\\') != NULL) return 1;
+
+    // blocam traversarea prin directoare / foldere
+    if (strstr(decoded, "..") != NULL) return 1;
+
+    return 0;
+}
+
+
 // =========== functii pentru tipurile de request ============
+
 void handle_get(int client_fd, const http_request_t* req){
     const char* path = req->path;
+    if (is_path_unsafe(path)) {
+        send_400(client_fd);
+        log_simple(client_fd, "400 Bad Request (blocked directory traversal)");
+        return;
+    }
+    
     char fullpath[2048] = "default";
     
      // 3.1. Daca e doar "/", inlocuim cu pagina principala / default 
@@ -412,19 +460,125 @@ void handle_post(int client_fd, const http_request_t* req) {
 }
 
 
+
+// ======== Functii de citire header + body integral din request http, in caz de cereri mai mari =======
+static long get_content_length_from_headers(const char *headers)
+{
+    if (!headers) return 0;
+
+    const char *p = headers;
+    while (*p) {
+        const char *line_end = strstr(p, "\r\n");
+        if (!line_end) break;
+
+        // line: "Content-Length: 123"
+        if (strncasecmp(p, "Content-Length:", 15) == 0) {
+            p += 15;
+            while (*p == ' ' || *p == '\t') p++;
+            long v = strtol(p, NULL, 10);
+            if (v < 0) v = 0;
+            return v;
+        }
+
+        p = line_end + 2;
+        if (p[0] == '\r' && p[1] == '\n') break;
+    }
+
+    return 0;
+}
+
+static int read_full_http_request(int client_fd, char **out_buf, int *out_len)
+{
+    *out_buf = NULL;
+    *out_len = 0;
+
+    size_t cap = 4096;
+    size_t len = 0;
+    char *buf = (char*)malloc(cap + 1);
+    if (!buf) return -1;
+
+    int headers_done = 0;
+    size_t header_end_index = 0;
+    long content_length = 0;
+
+    while (1) {
+        if (len >= MAX_REQUEST_SIZE) {
+            free(buf);
+            return -2; // too big
+        }
+
+        if (len + 1024 + 1 > cap) {
+            size_t newcap = cap * 2;
+            if (newcap > MAX_REQUEST_SIZE) newcap = MAX_REQUEST_SIZE;
+            char *nb = (char*)realloc(buf, newcap + 1);
+            if (!nb) { free(buf); return -1; }
+            buf = nb;
+            cap = newcap;
+        }
+
+        ssize_t r = read(client_fd, buf + len, cap - len);
+        if (r < 0) { free(buf); return -1; }
+        if (r == 0) break; // client closed
+
+        len += (size_t)r;
+        buf[len] = '\0';
+
+        if (!headers_done) {
+            char *sep = strstr(buf, "\r\n\r\n");
+            if (sep) {
+                headers_done = 1;
+                header_end_index = (size_t)(sep - buf) + 4;
+
+                // parse Content-Length from headers region
+                // temporarily null-terminate headers for easier scan
+                char saved = buf[header_end_index];
+                buf[header_end_index] = '\0';
+                content_length = get_content_length_from_headers(buf);
+                buf[header_end_index] = saved;
+
+                if (content_length > MAX_BODY_SIZE) {
+                    free(buf);
+                    return -2; // too big
+                }
+
+                // if we already have body fully, stop
+                size_t have_body = len - header_end_index;
+                if ((long)have_body >= content_length) break;
+            }
+        } else {
+            // headers already found, keep reading until body complete
+            size_t have_body = len - header_end_index;
+            if ((long)have_body >= content_length) break;
+        }
+    }
+
+    *out_buf = buf;
+    *out_len = (int)len;
+    return 0;
+}
+
+
 // ============ functie pentru gestionare conexiune + requesturi ================
 void handle_connection(int *client_socket){
     int client_fd = *client_socket;
-    char buffer[BUFFER_SIZE];
+    //char buffer[BUFFER_SIZE];
+    char* buffer = NULL;
     
+    int valRead = 0;
     // 1. CItim DIN socket IN buffer
-    int valRead = read(client_fd, buffer, BUFFER_SIZE - 1);
-    if(valRead < 0){
-        perror("eroare la read");
+    
+    //int valRead = read(client_fd, buffer, BUFFER_SIZE - 1);
+    int rr = read_full_http_request(client_fd, &buffer, &valRead);
+    if (rr != 0) {
+        if (rr == -2) {
+            send_400(client_fd);
+            log_simple(client_fd, "400 Bad Request (request too large)");
+        } else {
+            perror("eroare la read_full_http_request");
+        }
         close(client_fd);
         return;
     }
-    buffer[valRead] = '\0';
 
     // 2. DIN buffer extragem METODA (GET, POST, PUT...) CALEA si PROTOCOLUL HTTP.
     http_request_t req;
@@ -471,6 +625,7 @@ void handle_connection(int *client_socket){
         send_501(client_fd, req.method);
     }
 
+    free(buffer);
     close(*client_socket);
 }
 

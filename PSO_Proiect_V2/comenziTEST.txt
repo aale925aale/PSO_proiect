@@ -1,0 +1,7 @@
+// Comenzi de test pentru a le insera in terminal
+
+// Verificam ca un fisier cerut de user e safe, ca nu cere vreun fisier din sistem
+curl -i "http://localhost:8080/../server.log"
+curl -i "http://localhost:8080/%2e%2e/server.log"
+curl -i "http://localhost:8080/%2e%2e/%2e%2e/etc/passwd"
+
