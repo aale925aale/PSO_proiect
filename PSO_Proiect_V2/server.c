@@ -460,7 +460,6 @@ void handle_post(int client_fd, const http_request_t* req) {
 }
 
 
-
 // ======== Functii de citire header + body integral din request http, in caz de cereri mai mari =======
 static long get_content_length_from_headers(const char *headers)
 {
@@ -717,6 +716,19 @@ int main(){
             perror("eroare la accept");
             continue;
         }
+
+        // Afisam clientul conectat
+        struct sockaddr_in peer;
+        socklen_t peer_len = sizeof(peer);
+        char ip[INET_ADDRSTRLEN] = "unknown";
+        int port = 0;
+
+        if (getpeername(newSock_fd, (struct sockaddr *)&peer, &peer_len) == 0) {
+            inet_ntop(AF_INET, &peer.sin_addr, ip, sizeof(ip));
+            port = ntohs(peer.sin_port);
+        }
+
+        printf("[MAIN] Client connected: %s:%d (fd=%d)\n", ip, port, newSock_fd);
 
         // Obtinem adresa clientului
         int sockname = getsockname(newSock_fd, (struct sockaddr *)&client_addr, (socklen_t *)&client_addrlen);
