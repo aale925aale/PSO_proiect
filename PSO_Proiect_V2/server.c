@@ -16,6 +16,7 @@
 #define PORT 8080
 #define BUFFER_SIZE 1024
 #define THREAD_POOL_SIZE 20
+#define MAX_REQ_PER_CONN 50
 
 #define MAX_HEADER_SIZE (16 * 1024)
 #define MAX_BODY_SIZE   (256 * 1024)
@@ -252,7 +253,7 @@ void send_400(int client_fd) {
 
 }
 
-void send_200(int client_fd, const char* content_type, const char* body) {
+void send_200(int client_fd, const char* content_type, const char* body, int keep_alive) {
     // 200 = request procesat cu succes
     char header[256];
 
@@ -260,22 +261,24 @@ void send_200(int client_fd, const char* content_type, const char* body) {
         "HTTP/1.1 200 OK\r\n"
         "Content-Type: %s\r\n"
         "Content-Length: %zu\r\n"
-        "Connection: close\r\n"
+        "Connection: %s\r\n"
+        "%s"
         "\r\n",
         content_type,
-        strlen(body)
+        strlen(body),
+        keep_alive ? "keep-alive" : "close",
+        keep_alive ? "Keep-Alive: timeout=5, max=50\r\n" : ""
     );
-
     // trimite header-ul
     send(client_fd, header, strlen(header), 0);
 
     // trimite body
     send(client_fd, body, strlen(body), 0);
 
-    log_simple(client_fd, "RESP 200 OK (text)");
+    log_simple(client_fd, keep_alive ? "RESP 200 OK (text, keep-alive)" : "RESP 200 OK (text, close)");
 }
 
-void send_200_raw(int client_fd, const char* content_type, const char* data, size_t length)
+void send_200_raw(int client_fd, const char* content_type, const char* data, size_t length, int keep_alive)
 {
     // 200 raw = pt fisiere binare (imagini, css, js...)
     char header[256];
@@ -284,17 +287,20 @@ void send_200_raw(int client_fd, const char* content_type, const char* data, siz
     "HTTP/1.1 200 OK\r\n"
     "Content-Type: %s\r\n"
     "Content-Length: %zu\r\n"
-    "Connection: close\r\n"
+    "Connection: %s\r\n"
+    "%s"
     "\r\n",
     content_type,
-    length
-    );
+    length,
+    keep_alive ? "keep-alive" : "close",
+    keep_alive ? "Keep-Alive: timeout=5, max=50\r\n" : ""
+);
 
     send(client_fd, header, strlen(header), 0);
     send(client_fd, data, length, 0);
 
     char msg[256];
-    snprintf(msg, sizeof(msg), "RESP 200 OK (raw) len=%zu type=%s", length, content_type);
+    snprintf(msg, sizeof(msg), "RESP 200 OK (raw) len=%zu type=%s %s",length, content_type, keep_alive ? "KA" : "CLOSE");
     log_simple(client_fd, msg);
 
 }
@@ -338,7 +344,7 @@ static int is_path_unsafe(const char *raw_path)
 
 // =========== functii pentru tipurile de request ============
 
-void handle_get(int client_fd, const http_request_t* req){
+void handle_get(int client_fd, const http_request_t* req, int keep_alive){
     const char* path = req->path;
     if (is_path_unsafe(path)) {
         send_400(client_fd);
@@ -391,7 +397,7 @@ void handle_get(int client_fd, const http_request_t* req){
         if (strstr(path, ".jpg"))  mime = "image/jpeg";
     
         // 4.4 Trimitem raspunsul complet (header + body)
-        send_200_raw(client_fd, mime, content, content_length);
+        send_200_raw(client_fd, mime, content, content_length, keep_alive);
 
         free(content);
         fclose(file);
@@ -417,7 +423,7 @@ void urldecode(char *src, char *dest) {
     *dest = '\0';
 }
 
-void handle_post(int client_fd, const http_request_t* req) {
+void handle_post(int client_fd, const http_request_t* req, int keep_alive) {
     const char* path = req->path; 
     const char* data_start = req->body;
 
@@ -456,7 +462,7 @@ void handle_post(int client_fd, const http_request_t* req) {
     }
 
     // raspuns simplu de success
-    send_200(client_fd, "text/plain", "OK");
+    send_200(client_fd, "text/plain", "OK", keep_alive);
 }
 
 
@@ -486,7 +492,7 @@ static long get_content_length_from_headers(const char *headers)
     return 0;
 }
 
-static int read_full_http_request(int client_fd, char **out_buf, int *out_len)
+static int read_one_http_request(int client_fd, char **out_buf, int *out_len)
 {
     *out_buf = NULL;
     *out_len = 0;
@@ -501,10 +507,7 @@ static int read_full_http_request(int client_fd, char **out_buf, int *out_len)
     long content_length = 0;
 
     while (1) {
-        if (len >= MAX_REQUEST_SIZE) {
-            free(buf);
-            return -2; // too big
-        }
+        if (len >= MAX_REQUEST_SIZE) { free(buf); return -2; }
 
         if (len + 1024 + 1 > cap) {
             size_t newcap = cap * 2;
@@ -515,9 +518,14 @@ static int read_full_http_request(int client_fd, char **out_buf, int *out_len)
             cap = newcap;
         }
 
-        ssize_t r = read(client_fd, buf + len, cap - len);
-        if (r < 0) { free(buf); return -1; }
-        if (r == 0) break; // client closed
+        ssize_t r = recv(client_fd, buf + len, cap - len, 0);
+        if (r < 0) {
+            // timeout -> EAGAIN/EWOULDBLOCK
+            if (errno == EAGAIN || errno == EWOULDBLOCK) { free(buf); return -3; }
+            free(buf);
+            return -1;
+        }
+        if (r == 0) { free(buf); return -4; } // client closed
 
         len += (size_t)r;
         buf[len] = '\0';
@@ -528,24 +536,17 @@ static int read_full_http_request(int client_fd, char **out_buf, int *out_len)
                 headers_done = 1;
                 header_end_index = (size_t)(sep - buf) + 4;
 
-                // parse Content-Length from headers region
-                // temporarily null-terminate headers for easier scan
                 char saved = buf[header_end_index];
                 buf[header_end_index] = '\0';
                 content_length = get_content_length_from_headers(buf);
                 buf[header_end_index] = saved;
 
-                if (content_length > MAX_BODY_SIZE) {
-                    free(buf);
-                    return -2; // too big
-                }
+                if (content_length > MAX_BODY_SIZE) { free(buf); return -2; }
 
-                // if we already have body fully, stop
                 size_t have_body = len - header_end_index;
                 if ((long)have_body >= content_length) break;
             }
         } else {
-            // headers already found, keep reading until body complete
             size_t have_body = len - header_end_index;
             if ((long)have_body >= content_length) break;
         }
@@ -557,75 +558,168 @@ static int read_full_http_request(int client_fd, char **out_buf, int *out_len)
 }
 
 
+
+static int header_equals_token(const char *headers, const char *name, const char *token_lower)
+{
+    // cauta "name: ...." (case-insensitive) pana la linia goala
+    if (!headers) return 0;
+
+    const char *p = headers;
+    size_t name_len = strlen(name);
+
+    while (*p) {
+        const char *line_end = strstr(p, "\r\n");
+        if (!line_end) break;
+
+        // linie goala => stop
+        if (line_end == p) break;
+
+        if (strncasecmp(p, name, name_len) == 0 && p[name_len] == ':') {
+            const char *v = p + name_len + 1;
+            while (*v == ' ' || *v == '\t') v++;
+
+            // verificam daca token exista in valoare (simplu)
+            // ex: "keep-alive", "close"
+            char tmp[256];
+            size_t n = (size_t)(line_end - v);
+            if (n >= sizeof(tmp)) n = sizeof(tmp) - 1;
+            memcpy(tmp, v, n);
+            tmp[n] = '\0';
+
+            // lower-case pentru comparatie simpla
+            for (size_t i = 0; tmp[i]; i++) tmp[i] = (char)tolower((unsigned char)tmp[i]);
+
+            if (strstr(tmp, token_lower) != NULL) return 1;
+            return 0;
+        }
+
+        p = line_end + 2;
+    }
+
+    return 0;
+}
+
+static int should_keep_alive(const http_request_t *req)
+{
+    // reguli:
+    // - HTTP/1.1: keep-alive implicit, exceptie daca exista "Connection: close"
+    // - HTTP/1.0: close implicit, exceptie daca exista "Connection: keep-alive"
+    int is_http11 = (strcmp(req->protocol, "HTTP/1.1") == 0);
+    int is_http10 = (strcmp(req->protocol, "HTTP/1.0") == 0);
+
+    if (is_http11) {
+        if (header_equals_token(req->headers, "Connection", "close")) return 0;
+        return 1;
+    }
+
+    if (is_http10) {
+        if (header_equals_token(req->headers, "Connection", "keep-alive")) return 1;
+        return 0;
+    }
+
+    // daca protocol necunoscut, inchidem safe
+    return 0;
+}
+
+
 // ============ functie pentru gestionare conexiune + requesturi ================
 void handle_connection(int *client_socket){
     int client_fd = *client_socket;
+
+    struct timeval tv;
+    tv.tv_sec = 5;   // 5 sec idle
+    tv.tv_usec = 0;
+    setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+
+
     //char buffer[BUFFER_SIZE];
-    char* buffer = NULL;
-    
-    int valRead = 0;
-    // 1. CItim DIN socket IN buffer
-    
-    //int valRead = read(client_fd, buffer, BUFFER_SIZE - 1);
-    int rr = read_full_http_request(client_fd, &buffer, &valRead);
-    if (rr != 0) {
-        if (rr == -2) {
-            send_400(client_fd);
-            log_simple(client_fd, "400 Bad Request (request too large)");
-        } else {
-            perror("eroare la read_full_http_request");
+    int handled = 0;
+    while(handled < MAX_REQ_PER_CONN )
+    {
+            char* buffer = NULL;
+        
+        int valRead = 0;
+        // 1. CItim DIN socket IN buffer
+        
+        //int valRead = read(client_fd, buffer, BUFFER_SIZE - 1);
+        int rr = read_one_http_request(client_fd, &buffer, &valRead);
+        if (rr != 0) {
+            if (rr == -3) {
+                // idle timeout pe keep-alive (normal)
+                log_simple(client_fd, "KA idle timeout -> closing");
+            } else if (rr == -4) {
+                // client a inchis conexiunea (normal)
+                log_simple(client_fd, "Client closed connection");
+            } else if (rr == -2) {
+                // request prea mare
+                send_400(client_fd); // sau varianta cu keep_alive=0
+                log_simple(client_fd, "400 Bad Request (request too large)");
+            } else {
+                // eroare reala
+                perror("read_one_http_request");
+            }
+        
+            // iesim din loop si inchidem o singura data la final
+            break;
         }
-        close(client_fd);
-        return;
+
+        // 2. DIN buffer extragem METODA (GET, POST, PUT...) CALEA si PROTOCOLUL HTTP.
+        http_request_t req;
+        if (parse_http_request(buffer, valRead, &req) != 0) {
+            fprintf(stderr, "Request HTTP invalid.\n");
+            send_400(client_fd);
+            log_simple(client_fd, "400 Bad Request (parse_http_request failed)");
+            close(client_fd);
+            return;
+        }
+
+        int keep_alive = should_keep_alive(&req);
+
+        log_request_line(client_fd, &req, 0, 0); // status 0 = doar “received”
+
+
+        // 2.1. Stabilim prioritatea pe baza metodei / caii
+        priority_t prio;
+
+        if (strcmp(req.method, "POST") == 0) {
+            prio = PRIORITY_HIGH;
+        } else if (strcmp(req.method, "GET") == 0) {
+            prio = PRIORITY_MEDIUM;
+        } else {
+            prio = PRIORITY_LOW;
+        }
+    
+        // 2.2. Afisam request + prioritate
+        printf("[THREAD %lu] Request %s %s cu prioritatea %s (client fd = %d)\n",
+            pthread_self(),
+            req.method,
+            req.path,
+            priority_to_string(prio),
+            client_fd);
+
+        // 3. Verificam TIPUL de metoda
+        if(strcmp(req.method, "GET") == 0){
+            printf("Clientul a cerut: %s\n", req.path);
+            handle_get(client_fd, &req, keep_alive);
+        }
+        else if (strcmp(req.method, "POST") == 0) {
+            handle_post(client_fd, &req, keep_alive);
+        }
+        else{
+            fprintf(stderr, "Metoda %s nu e suportata\n", req.method);
+            send_501(client_fd, req.method);
+        }
+        
+        free(buffer);
+        handled++;
+
+        if (!keep_alive) {
+            log_simple(client_fd, "Connection: close requested -> closing");
+            break;
+        }
     }
-
-    // 2. DIN buffer extragem METODA (GET, POST, PUT...) CALEA si PROTOCOLUL HTTP.
-    http_request_t req;
-    if (parse_http_request(buffer, valRead, &req) != 0) {
-        fprintf(stderr, "Request HTTP invalid.\n");
-        send_400(client_fd);
-        log_simple(client_fd, "400 Bad Request (parse_http_request failed)");
-        close(client_fd);
-        return;
-    }
-
-    log_request_line(client_fd, &req, 0, 0); // status 0 = doar “received”
-
-
-    // 2.1. Stabilim prioritatea pe baza metodei / caii
-    priority_t prio;
-
-    if (strcmp(req.method, "POST") == 0) {
-         prio = PRIORITY_HIGH;
-     } else if (strcmp(req.method, "GET") == 0) {
-           prio = PRIORITY_MEDIUM;
-     } else {
-         prio = PRIORITY_LOW;
-     }
-  
-    // 2.2. Afisam request + prioritate
-    printf("[THREAD %lu] Request %s %s cu prioritatea %s (client fd = %d)\n",
-        pthread_self(),
-        req.method,
-        req.path,
-        priority_to_string(prio),
-        client_fd);
-
-    // 3. Verificam TIPUL de metoda
-    if(strcmp(req.method, "GET") == 0){
-        printf("Clientul a cerut: %s\n", req.path);
-        handle_get(client_fd, &req);
-    }
-    else if (strcmp(req.method, "POST") == 0) {
-           handle_post(client_fd, &req);
-    }
-    else{
-        fprintf(stderr, "Metoda %s nu e suportata\n", req.method);
-        send_501(client_fd, req.method);
-    }
-
-    free(buffer);
-    close(*client_socket);
+    close(client_socket);
 }
 
 
