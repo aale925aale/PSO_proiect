@@ -17,3 +17,4 @@ test_user|Mesaj de test
 maria ioana|frumos
 maria ioana|hei hei
 nume prenume|comentariul meu
+nume prenume|comm
