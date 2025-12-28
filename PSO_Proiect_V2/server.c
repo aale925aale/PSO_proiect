@@ -442,7 +442,7 @@ void handle_post(int client_fd, const http_request_t* req, int keep_alive) {
     int matched = sscanf(data_start,
                          "username=%99[^&]&message=%999[^\r\n]",
                          username, message);
-    printf("matched = %d\n", matched);
+    //printf("matched = %d\n", matched);
     printf("Nume utilizator: %s\n", username);
     printf("Mesaj: %s\n", message);
 
@@ -601,25 +601,26 @@ static int header_equals_token(const char *headers, const char *name, const char
 
 static int should_keep_alive(const http_request_t *req)
 {
-    // reguli:
-    // - HTTP/1.1: keep-alive implicit, exceptie daca exista "Connection: close"
-    // - HTTP/1.0: close implicit, exceptie daca exista "Connection: keep-alive"
     int is_http11 = (strcmp(req->protocol, "HTTP/1.1") == 0);
     int is_http10 = (strcmp(req->protocol, "HTTP/1.0") == 0);
 
     if (is_http11) {
+        // in HTTP/1.1 keep-alive e implicit
+        // inchidem doar daca clientul cere explicit Connection: close
         if (header_equals_token(req->headers, "Connection", "close")) return 0;
         return 1;
     }
 
     if (is_http10) {
+        // in HTTP/1.0 close e implicit
+        // pastram doar daca clientul cere explicit Connection: keep-alive
         if (header_equals_token(req->headers, "Connection", "keep-alive")) return 1;
         return 0;
     }
 
-    // daca protocol necunoscut, inchidem safe
     return 0;
 }
+
 
 
 // ============ functie pentru gestionare conexiune + requesturi ================
@@ -719,7 +720,7 @@ void handle_connection(int *client_socket){
             break;
         }
     }
-    close(client_socket);
+    close(client_fd);
 }
 
 
@@ -799,6 +800,7 @@ int main(){
         perror("eroare la listen");
         exit(-1);
     }
+    printf("Server HTTP asculta pe portul %d\n", PORT);
     printf("Asteptam conexiune...\n");
 
     // Acceptam n-conexiuni

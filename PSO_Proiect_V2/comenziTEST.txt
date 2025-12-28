@@ -5,3 +5,23 @@ curl -i "http://localhost:8080/../server.log"
 curl -i "http://localhost:8080/%2e%2e/server.log"
 curl -i "http://localhost:8080/%2e%2e/%2e%2e/etc/passwd"
 
+
+// Comenzi testare GET si POST
+
+//GET
+curl -i --http1.0 \
+  -H "Connection: close" \
+  http://localhost:8080/cats.html
+
+
+  //post 
+  curl -i --http1.0 \
+  -H "Connection: keep-alive" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "username=Ana&message=Primul" \
+  http://localhost:8080/
+
+
+
+// verificare conexiune keep alive folosind un GET
+curl -v http://localhost:8080/ http://localhost:8080/cats.html
