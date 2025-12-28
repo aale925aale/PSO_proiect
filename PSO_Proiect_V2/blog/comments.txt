@@ -18,3 +18,10 @@ maria ioana|frumos
 maria ioana|hei hei
 nume prenume|comentariul meu
 nume prenume|comm
+KeepAlive|Test KA
+KA|Primul
+KA|Primul
+Ana|Primul
+numele meu|comm 
+ioana maria|ce frumos
+Ana|Primul
