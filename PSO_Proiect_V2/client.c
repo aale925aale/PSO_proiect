@@ -119,6 +119,12 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Usage:\n");
         fprintf(stderr, "  %s GET  <host> <path> <port>\n", argv[0]);
         fprintf(stderr, "  %s POST <host> <path> <port> \"body_data\"\n", argv[0]);
+        
+        // DENISA
+        fprintf(stderr, "  %s HEAD <host> <path> <port>\n", argv[0]);
+        fprintf(stderr, "  %s OPTIONS <host> <path> <port>\n", argv[0]);
+        // DENISA
+        
         return 1;
     }
 

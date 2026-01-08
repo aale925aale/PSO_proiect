@@ -305,6 +305,50 @@ void send_200_raw(int client_fd, const char* content_type, const char* data, siz
 
 }
 
+// DENISA ---------------------------
+
+/* ======== NOU: trimite doar header-ele (fara body) - folosit de HEAD ======= */
+void send_200_headers(int client_fd, const char* content_type, size_t length, int keep_alive)
+{
+    char header[256];
+    snprintf(header, sizeof(header),
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: %s\r\n"
+        "Content-Length: %zu\r\n"
+        "Connection: %s\r\n"
+        "%s"
+        "\r\n",
+        content_type,
+        length,
+        keep_alive ? "keep-alive" : "close",
+        keep_alive ? "Keep-Alive: timeout=5, max=50\r\n" : ""
+    );
+    send(client_fd, header, strlen(header), 0);
+
+    char msg[256];
+    snprintf(msg, sizeof(msg), "RESP 200 OK (headers) len=%zu type=%s %s", length, content_type, keep_alive ? "KA" : "CLOSE");
+    log_simple(client_fd, msg);
+}
+
+/* ======== NOU: trimite Allow pentru OPTIONS (folosesc 204 No Content) ======= */
+void send_204_allow(int client_fd, int keep_alive)
+{
+    char header[256];
+    snprintf(header, sizeof(header),
+        "HTTP/1.1 204 No Content\r\n"
+        "Allow: GET, POST, HEAD, OPTIONS\r\n"
+        "Connection: %s\r\n"
+        "%s"
+        "\r\n",
+        keep_alive ? "keep-alive" : "close",
+        keep_alive ? "Keep-Alive: timeout=5, max=50\r\n" : ""
+    );
+    send(client_fd, header, strlen(header), 0);
+
+    log_simple(client_fd, keep_alive ? "RESP 204 No Content (Allow) KA" : "RESP 204 No Content (Allow) CLOSE");
+}
+
+// DENISA ---------------------------
 
 
 // ======== Detectam cale nesigura (ca sa nu poata fi accesate fisierele sistemului) ==========
@@ -464,6 +508,58 @@ void handle_post(int client_fd, const http_request_t* req, int keep_alive) {
     // raspuns simplu de success
     send_200(client_fd, "text/plain", "OK", keep_alive);
 }
+
+// DENISA --------------------------------
+
+void handle_head(int client_fd, const http_request_t* req, int keep_alive) 
+{
+    const char* path = req->path;
+    if (is_path_unsafe(path)) {
+        send_400(client_fd);
+        log_simple(client_fd, "400 Bad Request (blocked directory traversal) [HEAD]");
+        return;
+    }
+
+    char fullpath[2048] = "default";
+    if (strcmp(path, "/") == 0) {
+        strcpy(fullpath, "blog/index.html");
+    } else {
+        snprintf(fullpath, sizeof(fullpath), "blog%s", path);
+    }
+
+    FILE* file = fopen(fullpath, "r");
+    if (file == NULL) {
+        send_404(client_fd, req->path);
+        return;
+    }
+
+    // aflăm lungimea fisierului
+    fseek(file, 0, SEEK_END);
+    long content_length = ftell(file);
+    fseek(file, 0, SEEK_SET);
+
+    // detectăm mime (la fel ca GET)
+    const char* mime = "text/html";
+    if (strstr(path, ".css"))  mime = "text/css";
+    if (strstr(path, ".js"))   mime = "application/javascript";
+    if (strstr(path, ".png"))  mime = "image/png";
+    if (strstr(path, ".jpg"))  mime = "image/jpeg";
+
+    // trimitem doar header-ele
+    send_200_headers(client_fd, mime, content_length, keep_alive);
+
+    fclose(file);
+}
+
+/* ======== NOU: handler pentru OPTIONS - trimite Accept-urile (Allow) ======= */
+void handle_options(int client_fd, const http_request_t* req, int keep_alive) {
+    // Pentru moment trimitem 204 No Content + header Allow
+    send_204_allow(client_fd, keep_alive);
+}
+
+// DENISA -------------------------------
+
+
 
 
 // ======== Functii de citire header + body integral din request http, in caz de cereri mai mari =======
@@ -683,10 +779,14 @@ void handle_connection(int *client_socket){
         // 2.1. Stabilim prioritatea pe baza metodei / caii
         priority_t prio;
 
+        // DENISA - am adaugat pentru head si options
+
         if (strcmp(req.method, "POST") == 0) {
             prio = PRIORITY_HIGH;
-        } else if (strcmp(req.method, "GET") == 0) {
+        } else if (strcmp(req.method, "GET") == 0 || strcmp(req.method, "HEAD") == 0) {
             prio = PRIORITY_MEDIUM;
+        } else if (strcmp(req.method, "OPTIONS") == 0) {
+            prio = PRIORITY_LOW;
         } else {
             prio = PRIORITY_LOW;
         }
@@ -700,12 +800,21 @@ void handle_connection(int *client_socket){
             client_fd);
 
         // 3. Verificam TIPUL de metoda
+
+        // DENISA - am adaugat pt head si options
+
         if(strcmp(req.method, "GET") == 0){
             printf("Clientul a cerut: %s\n", req.path);
             handle_get(client_fd, &req, keep_alive);
         }
         else if (strcmp(req.method, "POST") == 0) {
             handle_post(client_fd, &req, keep_alive);
+        }
+        else if (strcmp(req.method, "HEAD") == 0) {
+            handle_head(client_fd, &req, keep_alive);
+        }
+        else if (strcmp(req.method, "OPTIONS") == 0) {
+            handle_options(client_fd, &req, keep_alive);
         }
         else{
             fprintf(stderr, "Metoda %s nu e suportata\n", req.method);

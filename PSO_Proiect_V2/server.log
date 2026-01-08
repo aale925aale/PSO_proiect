@@ -469,3 +469,92 @@
 2025-12-28 11:44:00.565 | tid=129131861771968 | 127.0.0.1:44892 | RESP 400 Bad Request
 2025-12-28 11:44:00.565 | tid=129131861771968 | 127.0.0.1:44892 | 400 Bad Request (blocked directory traversal)
 2025-12-28 11:44:00.565 | tid=129131861771968 | 127.0.0.1:44892 | Client closed connection
+2026-01-08 08:55:49.642 | tid=124523068257984 | 127.0.0.1:51674 | HEAD /cats.html HTTP/1.1 | status=0 | bytes=0
+2026-01-08 08:55:49.644 | tid=124523068257984 | 127.0.0.1:51674 | RESP 200 OK (headers) len=2618 type=text/html KA
+2026-01-08 08:55:49.650 | tid=124523068257984 | 127.0.0.1:51674 | Client closed connection
+2026-01-08 08:56:37.794 | tid=124523059865280 | 127.0.0.1:52708 | GET / HTTP/1.1 | status=0 | bytes=0
+2026-01-08 08:56:37.803 | tid=124523059865280 | 127.0.0.1:52708 | RESP 200 OK (raw) len=1376 type=text/html KA
+2026-01-08 08:56:43.146 | tid=124523059865280 | 127.0.0.1:52708 | KA idle timeout -> closing
+2026-01-08 08:56:43.212 | tid=124523051472576 | 127.0.0.1:58750 | GET /cats.html HTTP/1.1 | status=0 | bytes=0
+2026-01-08 08:56:43.212 | tid=124523051472576 | 127.0.0.1:58750 | RESP 200 OK (raw) len=2618 type=text/html KA
+2026-01-08 08:56:43.736 | tid=124523051472576 | 127.0.0.1:58750 | GET /img/cat1.jpg HTTP/1.1 | status=0 | bytes=0
+2026-01-08 08:56:43.745 | tid=124523051472576 | 127.0.0.1:58750 | RESP 200 OK (raw) len=5186 type=image/jpeg KA
+2026-01-08 08:56:43.756 | tid=124523043079872 | 127.0.0.1:58752 | GET /img/cat2.jpg HTTP/1.1 | status=0 | bytes=0
+2026-01-08 08:56:43.756 | tid=124523043079872 | 127.0.0.1:58752 | RESP 200 OK (raw) len=191100 type=image/jpeg KA
+2026-01-08 08:56:43.758 | tid=124523017901760 | 127.0.0.1:58778 | GET /cats.css HTTP/1.1 | status=0 | bytes=0
+2026-01-08 08:56:43.759 | tid=124523017901760 | 127.0.0.1:58778 | RESP 200 OK (raw) len=2565 type=text/css KA
+2026-01-08 08:56:43.761 | tid=124523043079872 | 127.0.0.1:58752 | GET /img/cat3.jpg HTTP/1.1 | status=0 | bytes=0
+2026-01-08 08:56:43.765 | tid=124523043079872 | 127.0.0.1:58752 | RESP 200 OK (raw) len=43998 type=image/jpeg KA
+2026-01-08 08:56:44.273 | tid=124523043079872 | 127.0.0.1:58752 | GET /api/comments HTTP/1.1 | status=0 | bytes=0
+2026-01-08 08:56:44.278 | tid=124523043079872 | 127.0.0.1:58752 | RESP 404 Not Found path=/api/comments
+2026-01-08 08:56:44.310 | tid=124523043079872 | 127.0.0.1:58752 | Client closed connection
+2026-01-08 08:56:44.364 | tid=124523017901760 | 127.0.0.1:58778 | GET /favicon.ico HTTP/1.1 | status=0 | bytes=0
+2026-01-08 08:57:52.131 | tid=138341834028736 | 127.0.0.1:44774 | GET /cats.html HTTP/1.1 | status=0 | bytes=0
+2026-01-08 08:57:52.131 | tid=138341834028736 | 127.0.0.1:44774 | RESP 200 OK (raw) len=2618 type=text/html KA
+2026-01-08 08:57:52.588 | tid=138341834028736 | 127.0.0.1:44774 | GET /cats.css HTTP/1.1 | status=0 | bytes=0
+2026-01-08 08:57:52.588 | tid=138341834028736 | 127.0.0.1:44774 | RESP 200 OK (raw) len=2565 type=text/css KA
+2026-01-08 08:57:52.593 | tid=138341817243328 | 127.0.0.1:44778 | GET /img/cat2.jpg HTTP/1.1 | status=0 | bytes=0
+2026-01-08 08:57:52.593 | tid=138341834028736 | 127.0.0.1:44774 | GET /img/cat1.jpg HTTP/1.1 | status=0 | bytes=0
+2026-01-08 08:57:52.593 | tid=138341817243328 | 127.0.0.1:44778 | RESP 200 OK (raw) len=191100 type=image/jpeg KA
+2026-01-08 08:57:52.594 | tid=138341834028736 | 127.0.0.1:44774 | RESP 200 OK (raw) len=5186 type=image/jpeg KA
+2026-01-08 08:57:52.601 | tid=138341808850624 | 127.0.0.1:44786 | GET /img/cat3.jpg HTTP/1.1 | status=0 | bytes=0
+2026-01-08 08:57:52.603 | tid=138341808850624 | 127.0.0.1:44786 | RESP 200 OK (raw) len=43998 type=image/jpeg KA
+2026-01-08 08:57:52.919 | tid=138341817243328 | 127.0.0.1:44778 | GET /favicon.ico HTTP/1.1 | status=0 | bytes=0
+2026-01-08 08:57:52.919 | tid=138341817243328 | 127.0.0.1:44778 | RESP 404 Not Found path=/favicon.ico
+2026-01-08 08:57:52.929 | tid=138341808850624 | 127.0.0.1:44786 | GET /api/comments HTTP/1.1 | status=0 | bytes=0
+2026-01-08 08:57:52.931 | tid=138341808850624 | 127.0.0.1:44786 | RESP 404 Not Found path=/api/comments
+2026-01-08 08:57:52.948 | tid=138341808850624 | 127.0.0.1:44786 | Client closed connection
+2026-01-08 08:57:55.179 | tid=138341834028736 | 127.0.0.1:44774 | POST /submit-comment HTTP/1.1 | status=0 | bytes=0
+2026-01-08 08:57:55.179 | tid=138341834028736 | 127.0.0.1:44774 | RESP 200 OK (text, keep-alive)
+2026-01-08 08:57:55.237 | tid=138341834028736 | 127.0.0.1:44774 | GET /api/comments HTTP/1.1 | status=0 | bytes=0
+2026-01-08 08:57:55.237 | tid=138341834028736 | 127.0.0.1:44774 | RESP 404 Not Found path=/api/comments
+2026-01-08 08:57:55.241 | tid=138341834028736 | 127.0.0.1:44774 | Client closed connection
+2026-01-08 08:59:22.023 | tid=138341825636032 | 127.0.0.1:56436 | Client closed connection
+2026-01-08 09:00:12.903 | tid=138341800457920 | 127.0.0.1:41560 | HEAD /cats.html HTTP/1.1 | status=0 | bytes=0
+2026-01-08 09:00:12.906 | tid=138341800457920 | 127.0.0.1:41560 | RESP 200 OK (headers) len=2618 type=text/html KA
+2026-01-08 09:00:18.185 | tid=138341800457920 | 127.0.0.1:41560 | KA idle timeout -> closing
+2026-01-08 09:01:48.649 | tid=138341792065216 | 127.0.0.1:53634 | OPTIONS / HTTP/1.1 | status=0 | bytes=0
+2026-01-08 09:01:48.652 | tid=138341792065216 | 127.0.0.1:53634 | RESP 204 No Content (Allow) KA
+2026-01-08 09:01:48.660 | tid=138341792065216 | 127.0.0.1:53634 | Client closed connection
+2026-01-08 09:06:16.603 | tid=138341783672512 | 127.0.0.1:56554 | HEAD /cats.html HTTP/1.1 | status=0 | bytes=0
+2026-01-08 09:06:16.604 | tid=138341783672512 | 127.0.0.1:56554 | RESP 200 OK (headers) len=2618 type=text/html KA
+2026-01-08 09:06:21.706 | tid=138341783672512 | 127.0.0.1:56554 | KA idle timeout -> closing
+2026-01-08 09:11:40.757 | tid=138341766887104 | 127.0.0.1:39912 | HEAD /cats.html HTTP/1.1 | status=0 | bytes=0
+2026-01-08 09:11:40.758 | tid=138341766887104 | 127.0.0.1:39912 | RESP 200 OK (headers) len=2618 type=text/html KA
+2026-01-08 09:11:40.768 | tid=138341766887104 | 127.0.0.1:39912 | Client closed connection
+2026-01-08 09:11:57.309 | tid=138341758494400 | 127.0.0.1:53734 | HEAD /cats.html HTTP/1.1 | status=0 | bytes=0
+2026-01-08 09:11:57.310 | tid=138341758494400 | 127.0.0.1:53734 | RESP 200 OK (headers) len=2618 type=text/html KA
+2026-01-08 09:12:02.698 | tid=138341758494400 | 127.0.0.1:53734 | KA idle timeout -> closing
+2026-01-08 09:13:41.470 | tid=138341775279808 | 127.0.0.1:37040 | GET /cats.html HTTP/1.1 | status=0 | bytes=0
+2026-01-08 09:13:41.482 | tid=138341775279808 | 127.0.0.1:37040 | RESP 200 OK (raw) len=2618 type=text/html KA
+2026-01-08 09:13:41.486 | tid=138341775279808 | 127.0.0.1:37040 | Client closed connection
+2026-01-08 09:14:19.827 | tid=138341733316288 | 127.0.0.1:36772 | HEAD /nuexista.html HTTP/1.1 | status=0 | bytes=0
+2026-01-08 09:14:19.827 | tid=138341733316288 | 127.0.0.1:36772 | RESP 404 Not Found path=/nuexista.html
+2026-01-08 09:14:19.832 | tid=138341733316288 | 127.0.0.1:36772 | Client closed connection
+2026-01-08 09:15:02.864 | tid=138341741708992 | 127.0.0.1:55310 | OPTIONS / HTTP/1.1 | status=0 | bytes=0
+2026-01-08 09:15:02.864 | tid=138341741708992 | 127.0.0.1:55310 | RESP 204 No Content (Allow) KA
+2026-01-08 09:15:02.866 | tid=138341741708992 | 127.0.0.1:55310 | Client closed connection
+2026-01-08 09:15:49.042 | tid=138341750101696 | 127.0.0.1:37850 | OPTIONS /cats.html HTTP/1.1 | status=0 | bytes=0
+2026-01-08 09:15:49.043 | tid=138341750101696 | 127.0.0.1:37850 | RESP 204 No Content (Allow) KA
+2026-01-08 09:15:49.044 | tid=138341750101696 | 127.0.0.1:37850 | Client closed connection
+2026-01-08 09:16:57.807 | tid=138341724923584 | 127.0.0.1:33340 | OPTIONS /cats.html HTTP/1.0 | status=0 | bytes=0
+2026-01-08 09:16:57.807 | tid=138341724923584 | 127.0.0.1:33340 | RESP 204 No Content (Allow) CLOSE
+2026-01-08 09:16:57.808 | tid=138341724923584 | 127.0.0.1:33340 | Connection: close requested -> closing
+2026-01-08 09:16:57.897 | tid=138341716530880 | 127.0.0.1:33350 | OPTIONS / HTTP/1.0 | status=0 | bytes=0
+2026-01-08 09:16:57.897 | tid=138341716530880 | 127.0.0.1:33350 | RESP 204 No Content (Allow) CLOSE
+2026-01-08 09:16:57.897 | tid=138341716530880 | 127.0.0.1:33350 | Connection: close requested -> closing
+2026-01-08 09:17:46.387 | tid=138341708138176 | 127.0.0.1:52840 | OPTIONS / HTTP/1.1 | status=0 | bytes=0
+2026-01-08 09:17:46.387 | tid=138341708138176 | 127.0.0.1:52840 | RESP 204 No Content (Allow) KA
+2026-01-08 09:17:46.389 | tid=138341708138176 | 127.0.0.1:52840 | Client closed connection
+2026-01-08 09:21:42.069 | tid=138341699745472 | 127.0.0.1:57964 | GET /cats.html HTTP/1.1 | status=0 | bytes=0
+2026-01-08 09:21:42.074 | tid=138341699745472 | 127.0.0.1:57964 | RESP 200 OK (raw) len=2618 type=text/html KA
+2026-01-08 09:21:42.085 | tid=138341699745472 | 127.0.0.1:57964 | Client closed connection
+2026-01-08 09:21:52.391 | tid=138341691352768 | 127.0.0.1:37646 | HEAD /cats.html HTTP/1.1 | status=0 | bytes=0
+2026-01-08 09:21:52.399 | tid=138341691352768 | 127.0.0.1:37646 | RESP 200 OK (headers) len=2618 type=text/html KA
+2026-01-08 09:21:52.405 | tid=138341691352768 | 127.0.0.1:37646 | Client closed connection
+2026-01-08 09:22:07.725 | tid=138341682960064 | 127.0.0.1:56786 | GET /cats.html HTTP/1.1 | status=0 | bytes=0
+2026-01-08 09:22:07.727 | tid=138341682960064 | 127.0.0.1:56786 | RESP 200 OK (raw) len=2618 type=text/html KA
+2026-01-08 09:22:07.734 | tid=138341682960064 | 127.0.0.1:56786 | Client closed connection
+2026-01-08 09:22:07.810 | tid=138341674567360 | 127.0.0.1:56794 | HEAD /cats.html HTTP/1.1 | status=0 | bytes=0
+2026-01-08 09:22:07.811 | tid=138341674567360 | 127.0.0.1:56794 | RESP 200 OK (headers) len=2618 type=text/html KA
+2026-01-08 09:22:07.811 | tid=138341674567360 | 127.0.0.1:56794 | Client closed connection

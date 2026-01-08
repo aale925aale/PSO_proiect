@@ -25,3 +25,42 @@ curl -i --http1.0 \
 
 // verificare conexiune keep alive folosind un GET
 curl -v http://localhost:8080/ http://localhost:8080/cats.html
+
+// DENISA
+
+// HEAD ---------------------------------
+curl -I http://localhost:8080/cats.html
+
+// head pe resursa inexistenta
+curl -I http://localhost:8080/nuexista.html 
+
+// compara content length intre get si head (trb sa fie egale)
+1.
+curl -s -D - http://localhost:8080/cats.html -o /dev/null | tr -d '\r' | grep -i '^Content-Length:'
+2.
+curl -s -I http://localhost:8080/cats.html | tr -d '\r' | grep -i '^Content-Length:'
+
+SAU DOAR(tot asta):
+
+get=$(curl -s -D - http://localhost:8080/cats.html -o /dev/null | tr -d '\r' | awk -F': ' '/^Content-Length:/ {print $2; exit}')
+head=$(curl -s -I http://localhost:8080/cats.html | tr -d '\r' | awk -F': ' '/^Content-Length:/ {print $2; exit}')
+echo "GET:  $get"
+echo "HEAD: $head"
+if [ -z "$get" ] || [ -z "$head" ]; then
+  echo "Eroare: lipseste Content-Length la unul din raspunsuri"
+elif [ "$get" = "$head" ]; then
+  echo "OK: Content-Length sunt egale"
+else
+  echo "FAIL: Content-Length difera"
+fi
+
+
+// OPTIONS -------------------------------
+curl -i -X OPTIONS http://localhost:8080/
+
+// options pt o cale specifica
+curl -i -X OPTIONS http://localhost:8080/cats.html 
+
+// testare keep-alive cu doua request uri in aceeasi conexiune
+bash -c 'exec 3<>/dev/tcp/localhost/8080; printf "HEAD /cats.html HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\nHEAD /favicon.ico HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3; cat <&3; exec 3>&-'
+
