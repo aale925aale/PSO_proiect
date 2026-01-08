@@ -4,6 +4,16 @@
     <meta charset="UTF-8">
     <title>Pisici Adorabile</title>
     <link rel="stylesheet" href="/cats.css">
+    <style>
+      /* Stil minim pentru UI de autentificare */
+      .auth-panel { margin: 10px 0; padding: 10px; border: 1px solid #ddd; background: #f9f9f9; }
+      .hidden { display: none; }
+      .auth-buttons button { margin-right: 8px; }
+      .modal { border: 1px solid #ccc; padding: 10px; background: #fff; width: 360px; }
+      .error { color: #b00; }
+      #comments-list .comment { padding: 6px; border-bottom: 1px solid #eee; }
+      #comment-username { width: 200px; }
+    </style>
 </head>
 <body>
     <h1>Pisici Adorabile</h1>
@@ -15,13 +25,49 @@
         <img src="img/cat3.jpg" alt="Pisica 3" class="cat">
     </div>
 
-    <div class="form-container">
-        <!-- action/method nu mai conteaza, trimitem cu fetch -->
-        <form id="commentForm">
-            <input type="text" name="username" placeholder="Numele tău" required>
-            <textarea name="message" placeholder="Comentariul tău..." rows="4" required></textarea>
-            <button type="submit">Trimite Comentariu</button>
-        </form>
+    <div id="auth-area" class="form-container">
+        <!-- Mesajul de avertizare pentru anonimi -->
+        <div id="need-auth" class="auth-panel hidden">
+            <p class="error" style="font-weight:bold;">E nevoie să fii autentificat pentru a lăsa comentarii.</p>
+            <div class="auth-buttons">
+                <button id="btn-login">Login</button>
+                <button id="btn-signup">Sign up</button>
+            </div>
+        </div>
+
+        <!-- Forme pentru login / signup -->
+        <div id="login-form" class="auth-panel hidden modal">
+            <h3>Login</h3>
+            <form id="form-login">
+                <input name="username" placeholder="Username" required><br><br>
+                <input name="password" type="password" placeholder="Parolă" required><br><br>
+                <button type="submit">Login</button>
+                <button type="button" id="login-cancel">Anulează</button>
+                <div id="login-msg" class="error" style="margin-top:8px;"></div>
+            </form>
+        </div>
+
+        <div id="signup-form" class="auth-panel hidden modal">
+            <h3>Sign up</h3>
+            <form id="form-signup">
+                <input name="username" placeholder="Username" required><br><br>
+                <input name="password" type="password" placeholder="Parolă" required><br><br>
+                <button type="submit">Crează cont</button>
+                <button type="button" id="signup-cancel">Anulează</button>
+                <div id="signup-msg" class="error" style="margin-top:8px;"></div>
+            </form>
+        </div>
+
+        <!-- Formular de comentarii (doar pentru autentificati) -->
+        <div id="comment-form-wrap" class="auth-panel hidden">
+            <form id="commentForm">
+                <label>Username: <input type="text" name="username" id="comment-username" readonly></label><br><br>
+                <textarea name="message" id="comment-message" placeholder="Comentariul tău..." rows="4" required style="width:100%;"></textarea><br><br>
+                <button type="submit">Trimite Comentariu</button>
+                <button type="button" id="btn-logout">Logout</button>
+                <div id="comment-msg" style="margin-top:8px;"></div>
+            </form>
+        </div>
     </div>
 
     <div class="comments">
@@ -32,45 +78,221 @@
     <br>
     <a href="/" class="back-btn">Înapoi la pagina principală</a>
 
-    <script>
-        async function loadComments() {
-            const res = await fetch('/api/comments');
-            const comments = await res.json();
-            const list = document.getElementById('comments-list');
-            if (comments.length === 0) {
-                list.innerHTML = '<p style="color:#999; font-style:italic;">Încă nu sunt comentarii. Fii primul!</p>';
-                return;
-            }
-            list.innerHTML = comments.map(c =>
-                `<div class="comment"><strong>${c.username}</strong>: ${c.message}</div>`
-            ).join('');
+<script>
+/*
+  cats.html client-side logic:
+  - whoami() -> GET /whoami (credentials included)
+  - loadComments() -> GET /api/comments
+  - if not authenticated -> show message + Login/SignUp buttons
+  - Login/Signup forms -> POST to /login or /signup (credentials included, follow redirect)
+  - After successful login/signup reinitialize UI and reload comments
+  - Submit comment -> POST /submit-comment; server va folosi sesiunea sau Basic Auth
+*/
+
+function escapeHtml(s) {
+    if (!s) return '';
+    return s.replace(/&/g, '&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+async function whoami() {
+    try {
+        const res = await fetch('/whoami', { credentials: 'same-origin' });
+        if (!res.ok) throw new Error('not-auth');
+        const j = await res.json();
+        return j.username;
+    } catch (e) {
+        return null;
+    }
+}
+
+async function loadComments() {
+    try {
+        const res = await fetch('/api/comments', { credentials: 'same-origin' });
+        if (!res.ok) {
+            document.getElementById('comments-list').innerText = 'Eroare la încarcarea comentariilor';
+            return;
         }
+        const comments = await res.json();
+        const list = document.getElementById('comments-list');
+        if (!comments || comments.length === 0) {
+            list.innerHTML = '<p style="color:#999; font-style:italic;">Încă nu sunt comentarii. Fii primul!</p>';
+            return;
+        }
+        list.innerHTML = comments.map(c =>
+            `<div class="comment"><strong>${escapeHtml(c.username)}</strong>: ${escapeHtml(c.message)}</div>`
+        ).join('');
+    } catch (e) {
+        document.getElementById('comments-list').innerText = 'Eroare la încarcarea comentariilor';
+    }
+}
 
-        document.getElementById('commentForm').addEventListener('submit', async (e) => {
-            e.preventDefault(); // NU mai lasam browserul sa faca submit normal
+function hideAuthForms() {
+    // ascundem formularele
+    document.getElementById('login-form').classList.add('hidden');
+    document.getElementById('signup-form').classList.add('hidden');
 
-            const form = e.target;
-            const formData = new FormData(form);
-            const body = new URLSearchParams(formData);  // => application/x-www-form-urlencoded
+    // resetăm input-urile (user/parolă)
+    document.getElementById('form-login').reset();
+    document.getElementById('form-signup').reset();
+}
 
-            const res = await fetch('/submit-comment', {
+
+async function initAuthUI() {
+    const username = await whoami();
+
+    const needAuth = document.getElementById('need-auth');
+    const commentWrap = document.getElementById('comment-form-wrap');
+    const loginForm = document.getElementById('login-form');
+    const signupForm = document.getElementById('signup-form');
+
+    // NOU: reset UI și formulare
+    hideAuthForms(); // NOU
+
+    document.getElementById('login-msg').innerText = '';
+    document.getElementById('signup-msg').innerText = '';
+    document.getElementById('comment-msg').innerText = '';
+
+    if (!username) {
+        // NEAUTENTIFICAT
+        needAuth.classList.remove('hidden');
+        commentWrap.classList.add('hidden');
+
+        // NOU: Login button
+        document.getElementById('btn-login').onclick = () => {
+            hideAuthForms(); // NOU
+            loginForm.classList.remove('hidden');
+        };
+
+        // NOU: Signup button
+        document.getElementById('btn-signup').onclick = () => {
+            hideAuthForms(); // NOU
+            signupForm.classList.remove('hidden');
+        };
+    } else {
+        // AUTENTIFICAT
+        needAuth.classList.add('hidden');
+        commentWrap.classList.remove('hidden');
+        document.getElementById('comment-username').value = username;
+
+        hideAuthForms(); // NOU
+    }
+
+    // ===== LOGIN =====
+    document.getElementById('form-login').onsubmit = async (e) => {
+        e.preventDefault();
+        document.getElementById('login-msg').innerText = '';
+
+        const fd = new FormData(e.target);
+        const body = new URLSearchParams(fd).toString();
+
+        try {
+            const res = await fetch('/login', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded'
-                },
-                body: body.toString()
+                body: body,
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                credentials: 'same-origin',
+                redirect: 'follow'
             });
 
-            if (!res.ok) {
-                console.error('Eroare la trimitere comentariu', await res.text());
-                return;
+            if (res.ok || res.status === 302) {
+                hideAuthForms();            // NOU
+                await initAuthUI();         // NOU
+                await loadComments();       // NOU
+            } else {
+                document.getElementById('login-msg').innerText = 'Login eșuat';
             }
+        } catch (err) {
+            document.getElementById('login-msg').innerText = 'Eroare la login';
+        }
+    };
 
-            form.reset();   // golim formularul
-            loadComments(); // reîncarcam lista de comentarii
-        });
+    document.getElementById('login-cancel').onclick = () => {
+        hideAuthForms(); // NOU
+    };
 
-        window.addEventListener('load', loadComments);
-    </script>
+    // ===== SIGNUP =====
+    document.getElementById('form-signup').onsubmit = async (e) => {
+        e.preventDefault();
+        document.getElementById('signup-msg').innerText = '';
+
+        const fd = new FormData(e.target);
+        const body = new URLSearchParams(fd).toString();
+
+        try {
+            const res = await fetch('/signup', {
+                method: 'POST',
+                body: body,
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                credentials: 'same-origin',
+                redirect: 'follow'
+            });
+
+            if (res.ok || res.status === 302) {
+                hideAuthForms();            // NOU
+                await initAuthUI();         // NOU
+                await loadComments();       // NOU
+            } else {
+                document.getElementById('signup-msg').innerText = 'Eroare la creare cont';
+            }
+        } catch (err) {
+            document.getElementById('signup-msg').innerText = 'Eroare la creare cont';
+        }
+    };
+
+    document.getElementById('signup-cancel').onclick = () => {
+        hideAuthForms(); // NOU
+    };
+
+    // ===== LOGOUT =====
+    document.getElementById('btn-logout').onclick = async () => {
+        try {
+            await fetch('/logout', { credentials: 'same-origin' });
+        } catch (e) {}
+
+        hideAuthForms();    // NOU
+        await initAuthUI(); // NOU
+    };
+
+    // ===== COMMENT =====
+    document.getElementById('commentForm').onsubmit = async (e) => {
+        e.preventDefault();
+        document.getElementById('comment-msg').innerText = '';
+
+        const fd = new FormData(e.target);
+        const body = new URLSearchParams(fd).toString();
+
+        try {
+            const res = await fetch('/submit-comment', {
+                method: 'POST',
+                body: body,
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                credentials: 'same-origin',
+                redirect: 'follow'
+            });
+
+            if (res.ok) {
+                document.getElementById('comment-message').value = ''; // NOU
+                await loadComments();
+            } else if (res.status === 401 || res.status === 302) {
+                await initAuthUI();
+                document.getElementById('comment-msg').innerText =
+                    'Trebuie să fii autentificat.';
+            } else {
+                document.getElementById('comment-msg').innerText =
+                    'Eroare la trimiterea comentariului';
+            }
+        } catch (err) {
+            document.getElementById('comment-msg').innerText =
+                'Eroare la trimiterea comentariului';
+        }
+    };
+}
+
+
+window.addEventListener('load', () => {
+    initAuthUI();
+    loadComments();
+});
+</script>
 </body>
 </html>

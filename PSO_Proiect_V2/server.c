@@ -22,6 +22,7 @@
 #define MAX_BODY_SIZE   (256 * 1024)
 #define MAX_REQUEST_SIZE (MAX_HEADER_SIZE + MAX_BODY_SIZE)
 
+#define SESSION_TTL_SECONDS (60 * 60) // 1 ora
 
 pthread_t thread_pool[THREAD_POOL_SIZE];
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -40,6 +41,32 @@ typedef struct {
     const char* body;        // pointer in buffer, inceputul body-ului
     size_t body_length;      // lungimea body-ului (pentru POST)
 } http_request_t;
+
+// DENISA --------------------------------------
+
+/* ======= STRUCTURA pentru sesiuni (in-memory) ======= */
+typedef struct session_s {
+    char id[65];               // SID hex (64) + null
+    char username[128];
+    time_t expiry;
+    struct session_s *next;
+} session_t;
+
+static session_t *sessions_head = NULL;
+static pthread_mutex_t sessions_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+/* ======= STRUCTURA utilizatori in memorie (incarcare din users.txt) ======= */
+typedef struct user_s {
+    char username[128];
+    char password[128]; // plain text pentru exemplu (imbunatatire: stocare hash)
+    struct user_s *next;
+} user_t;
+
+static user_t *users_head = NULL;
+static pthread_mutex_t users_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+// DENISA --------------------------------------
+
 
 int parse_http_request(char* buffer, int length, http_request_t* req) {
     // Ne asiguram ca avem terminator de sir
@@ -305,9 +332,9 @@ void send_200_raw(int client_fd, const char* content_type, const char* data, siz
 
 }
 
-// DENISA ---------------------------
+// DENISA begin ---------------------------
 
-/* ======== NOU: trimite doar header-ele (fara body) - folosit de HEAD ======= */
+/* ======== trimite doar header-ele (fara body) - folosit de HEAD ======= */
 void send_200_headers(int client_fd, const char* content_type, size_t length, int keep_alive)
 {
     char header[256];
@@ -330,7 +357,7 @@ void send_200_headers(int client_fd, const char* content_type, size_t length, in
     log_simple(client_fd, msg);
 }
 
-/* ======== NOU: trimite Allow pentru OPTIONS (folosesc 204 No Content) ======= */
+/* ======== trimite Allow pentru OPTIONS (folosesc 204 No Content) ======= */
 void send_204_allow(int client_fd, int keep_alive)
 {
     char header[256];
@@ -348,7 +375,66 @@ void send_204_allow(int client_fd, int keep_alive)
     log_simple(client_fd, keep_alive ? "RESP 204 No Content (Allow) KA" : "RESP 204 No Content (Allow) CLOSE");
 }
 
-// DENISA ---------------------------
+/* ======== redirect cu cookie (folosit dupa login) ======= */
+void send_302_set_cookie_and_location(int client_fd, const char* cookie, const char* location, int keep_alive)
+{
+    char header[512];
+    snprintf(header, sizeof(header),
+        "HTTP/1.1 302 Found\r\n"
+        "Location: %s\r\n"
+        "Set-Cookie: %s\r\n"
+        "Connection: %s\r\n"
+        "%s"
+        "\r\n",
+        location,
+        cookie,
+        keep_alive ? "keep-alive" : "close",
+        keep_alive ? "Keep-Alive: timeout=5, max=50\r\n" : ""
+    );
+    send(client_fd, header, strlen(header), 0);
+    log_simple(client_fd, "RESP 302 Set-Cookie + Location");
+}
+
+/* ======== Redirect fara cookie (ex: redirect la login) ======= */
+void send_302_location(int client_fd, const char* location, int keep_alive)
+{
+    char header[256];
+    snprintf(header, sizeof(header),
+        "HTTP/1.1 302 Found\r\n"
+        "Location: %s\r\n"
+        "Connection: %s\r\n"
+        "%s"
+        "\r\n",
+        location,
+        keep_alive ? "keep-alive" : "close",
+        keep_alive ? "Keep-Alive: timeout=5, max=50\r\n" : ""
+    );
+    send(client_fd, header, strlen(header), 0);
+    log_simple(client_fd, "RESP 302 Location");
+}
+
+void send_200_json(int client_fd, const char* json, int keep_alive)
+{
+    char header[256];
+    snprintf(header, sizeof(header),
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: application/json\r\n"
+        "Content-Length: %zu\r\n"
+        "Connection: %s\r\n"
+        "%s"
+        "\r\n",
+        strlen(json),
+        keep_alive ? "keep-alive" : "close",
+        keep_alive ? "Keep-Alive: timeout=5, max=50\r\n" : ""
+    );
+    send(client_fd, header, strlen(header), 0);
+    send(client_fd, json, strlen(json), 0);
+
+    log_simple(client_fd, keep_alive ? "RESP 200 OK (json, keep-alive)" : "RESP 200 OK (json, close)");
+}
+
+
+// DENISA end---------------------------
 
 
 // ======== Detectam cale nesigura (ca sa nu poata fi accesate fisierele sistemului) ==========
@@ -385,6 +471,295 @@ static int is_path_unsafe(const char *raw_path)
     return 0;
 }
 
+// DENISA begin---------------------------------------
+
+// ======== UTIL: extrage valoarea unui header (ex: Cookie, Authorization) ========
+static int get_header_value(const char *headers, const char *name, char *out, size_t out_sz)
+{
+    if (!headers) return 0;
+    const char *p = headers;
+    size_t name_len = strlen(name);
+    while (*p) {
+        const char *line_end = strstr(p, "\r\n");
+        if (!line_end) break;
+        if (line_end == p) break; // linie goala
+        if (strncasecmp(p, name, name_len) == 0 && p[name_len] == ':') {
+            const char *v = p + name_len + 1;
+            while (*v == ' ' || *v == '\t') v++;
+            size_t n = (size_t)(line_end - v);
+            if (n >= out_sz) n = out_sz - 1;
+            memcpy(out, v, n);
+            out[n] = '\0';
+            return 1;
+        }
+        p = line_end + 2;
+    }
+    return 0;
+}
+
+// ======== UTIL: extrage cookie din header Cookie (de ex SID=...) ========
+static int get_cookie_value(const char *headers, const char *cookie_name, char *out, size_t out_sz)
+{
+    char cookie_hdr[1024];
+    if (!get_header_value(headers, "Cookie", cookie_hdr, sizeof(cookie_hdr))) return 0;
+    // cookie string: "SID=abcd; other=..."; cautam cookie_name=
+    char *p = cookie_hdr;
+    size_t keylen = strlen(cookie_name);
+    while (*p) {
+        while (*p == ' ') p++;
+        if (strncasecmp(p, cookie_name, keylen) == 0 && p[keylen] == '=') {
+            p += keylen + 1;
+            char *end = strchr(p, ';');
+            size_t n = end ? (size_t)(end - p) : strlen(p);
+            if (n >= out_sz) n = out_sz - 1;
+            memcpy(out, p, n);
+            out[n] = '\0';
+            return 1;
+        }
+        char *semi = strchr(p, ';');
+        if (!semi) break;
+        p = semi + 1;
+    }
+    return 0;
+}
+
+// ======== UTIL: extrage valoarea unui camp din body application/x-www-form-urlencoded ========
+static void get_form_value(const char *body, const char *key, char *out, size_t out_sz)
+{
+    out[0] = '\0';
+    if (!body || !key || out_sz == 0) return;
+
+    size_t klen = strlen(key);
+    const char *p = body;
+    // cautam pattern "key=" dar asiguram ca preceda inceputul sau '&'
+    while (p && *p) {
+        const char *found = strstr(p, key);
+        if (!found) break;
+        // verificam ca imediat dupa key urmeaza '='
+        if (found[klen] == '=') {
+            // verificam ca e inceputul sau precedat de '&'
+            if (found == body || *(found - 1) == '&') {
+                const char *val = found + klen + 1;
+                const char *end = strchr(val, '&');
+                size_t n = end ? (size_t)(end - val) : strlen(val);
+                if (n >= out_sz) n = out_sz - 1;
+                memcpy(out, val, n);
+                out[n] = '\0';
+                return;
+            }
+        }
+        p = found + 1;
+    }
+}
+
+// ======== UTIL: decode base64 (simplu) ========
+static int b64_val(char c) {
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '+') return 62;
+    if (c == '/') return 63;
+    return -1;
+}
+static int base64_decode(const char *in, unsigned char *out, size_t *out_len) {
+    size_t il = strlen(in);
+    size_t i = 0, o = 0;
+    int val=0, valb=-8;
+    for (i = 0; i < il; ++i) {
+        int c = in[i];
+        if (c == '=') break;
+        int v = b64_val(c);
+        if (v < 0) continue;
+        val = (val<<6) + v;
+        valb += 6;
+        if (valb >= 0) {
+            if (out) out[o] = (unsigned char)((val>>valb) & 0xFF);
+            o++;
+            valb -= 8;
+        }
+    }
+    *out_len = o;
+    return 0;
+}
+
+// ======== SESSIUNI: gaseste sesiune prin id (returneaza pointer sau NULL) ========
+static session_t* session_find_by_id(const char *id)
+{
+    if (!id) return NULL;
+    pthread_mutex_lock(&sessions_mutex);
+    session_t *p = sessions_head;
+    time_t now = time(NULL);
+    while (p) {
+        if (strcmp(p->id, id) == 0) {
+            if (p->expiry >= now) {
+                pthread_mutex_unlock(&sessions_mutex);
+                return p;
+            } else {
+                // expirata -> o stergem (nu intoarcem pointer invalid)
+                break;
+            }
+        }
+        p = p->next;
+    }
+    pthread_mutex_unlock(&sessions_mutex);
+    return NULL;
+}
+
+// ======== SESSIUNI: adauga sesiune (id, username) ========
+static void session_add(const char *id, const char *username)
+{
+    session_t *s = malloc(sizeof(session_t));
+    if (!s) return;
+    strncpy(s->id, id, sizeof(s->id)-1);
+    s->id[sizeof(s->id)-1] = '\0';
+    strncpy(s->username, username, sizeof(s->username)-1);
+    s->username[sizeof(s->username)-1] = '\0';
+    s->expiry = time(NULL) + SESSION_TTL_SECONDS;
+
+    pthread_mutex_lock(&sessions_mutex);
+    // curatam expirate
+    session_t **pp = &sessions_head;
+    time_t now = time(NULL);
+    while (*pp) {
+        session_t *cur = *pp;
+        if (cur->expiry < now) {
+            *pp = cur->next;
+            free(cur);
+        } else {
+            pp = &cur->next;
+        }
+    }
+    s->next = sessions_head;
+    sessions_head = s;
+    pthread_mutex_unlock(&sessions_mutex);
+}
+
+// ======== SESSIUNI: sterge dupa id ========
+static void session_remove_by_id(const char *id)
+{
+    pthread_mutex_lock(&sessions_mutex);
+    session_t **pp = &sessions_head;
+    while (*pp) {
+        session_t *cur = *pp;
+        if (strcmp(cur->id, id) == 0) {
+            *pp = cur->next;
+            free(cur);
+            break;
+        }
+        pp = &cur->next;
+    }
+    pthread_mutex_unlock(&sessions_mutex);
+}
+
+// ======== UTIL: genereaza SID hex (din /dev/urandom sau rand fallback) ========
+static void generate_session_id(char *out, size_t out_sz)
+{
+    unsigned char buf[32];
+    FILE *f = fopen("/dev/urandom", "rb");
+    if (f) {
+        fread(buf, 1, sizeof(buf), f);
+        fclose(f);
+    } else {
+        for (size_t i = 0; i < sizeof(buf); i++) buf[i] = rand() % 256;
+    }
+    static const char hex[] = "0123456789abcdef";
+    size_t out_i = 0;
+    for (size_t i = 0; i < sizeof(buf) && out_i + 2 < out_sz; i++) {
+        out[out_i++] = hex[(buf[i] >> 4) & 0xF];
+        out[out_i++] = hex[buf[i] & 0xF];
+    }
+    out[out_i] = '\0';
+}
+
+// ======== USERS: incarcare din users.txt (format username:password pe linie) ========
+static void users_load_from_file(const char *path)
+{
+    pthread_mutex_lock(&users_mutex);
+    // eliberam lista veche
+    user_t *p = users_head;
+    while (p) { user_t *n = p->next; free(p); p = n; }
+    users_head = NULL;
+
+    FILE *f = fopen(path, "r");
+    if (!f) { pthread_mutex_unlock(&users_mutex); return; }
+    char line[512];
+    while (fgets(line, sizeof(line), f)) {
+        char *nl = strchr(line, '\n'); if (nl) *nl = '\0';
+        if (line[0] == '\0') continue;
+        char *colon = strchr(line, ':');
+        if (!colon) continue;
+        *colon = '\0';
+        char *username = line;
+        char *password = colon + 1;
+        user_t *u = malloc(sizeof(user_t));
+        if (!u) continue;
+        strncpy(u->username, username, sizeof(u->username)-1);
+        u->username[sizeof(u->username)-1] = '\0';
+        strncpy(u->password, password, sizeof(u->password)-1);
+        u->password[sizeof(u->password)-1] = '\0';
+        u->next = users_head;
+        users_head = u;
+    }
+    fclose(f);
+    pthread_mutex_unlock(&users_mutex);
+}
+
+// ======== USERS: verifica credentiale (plain-text comparare) ========
+static int users_check_credentials(const char *username, const char *password)
+{
+    pthread_mutex_lock(&users_mutex);
+    user_t *p = users_head;
+    while (p) {
+        if (strcmp(p->username, username) == 0 && strcmp(p->password, password) == 0) {
+            pthread_mutex_unlock(&users_mutex);
+            return 1;
+        }
+        p = p->next;
+    }
+    pthread_mutex_unlock(&users_mutex);
+    return 0;
+}
+
+// CHECK Basic Auth: parsa Authorization: Basic ... si verifica utilizator
+// Daca returneaza 1 => username valid gasit si scris in out_username; daca returneaza 0 => nu e valid/no header
+static int check_basic_auth(const http_request_t *req, char *out_username, size_t out_sz)
+{
+    char auth_hdr[512];
+    if (!get_header_value(req->headers, "Authorization", auth_hdr, sizeof(auth_hdr))) return 0;
+    // auth_hdr: "Basic base64=="
+    // Folosim un pointer pentru a nu modifica numele array-ului
+    char *p = auth_hdr;
+    while (*p == ' ') p++;
+    if (strncasecmp(p, "Basic ", 6) != 0) return 0;
+    const char *b64 = p + 6;
+    unsigned char decoded[512];
+    size_t dec_len = 0;
+    base64_decode(b64, decoded, &dec_len);
+    if (dec_len == 0) return 0;
+
+    // decoded: "username:password" -- asiguram terminator
+    if (dec_len >= sizeof(decoded)) dec_len = sizeof(decoded) - 1;
+    decoded[dec_len] = '\0';
+    char *colon = strchr((char*)decoded, ':');
+    if (!colon) return 0;
+    *colon = '\0';
+    char *username = (char*)decoded;
+    char *password = colon + 1;
+
+    // verificam credentiale in users list
+    users_load_from_file("users.txt");
+    if (users_check_credentials(username, password)) {
+        if (out_username && out_sz > 0) {
+            strncpy(out_username, username, out_sz-1);
+            out_username[out_sz-1] = '\0';
+        }
+        return 1;
+    }
+    return 0;
+}
+
+// DENISA end---------------------------------------
+
 
 // =========== functii pentru tipurile de request ============
 
@@ -396,6 +771,46 @@ void handle_get(int client_fd, const http_request_t* req, int keep_alive){
         return;
     }
     
+     //DENISA begin------------------------------------
+     // Rute speciale API / user
+    if (strcmp(path, "/api/comments") == 0) {
+        // return JSON cu comentarii (implementare separată)
+        handle_api_comments(client_fd, req, keep_alive);
+        return;
+    }
+    if (strcmp(path, "/whoami") == 0) {
+        // returnează username din sesiune sau 401
+        handle_whoami(client_fd, req, keep_alive);
+        return;
+    }
+
+    // Logout (sterge cookie si redirect la /)
+    if (strcmp(path, "/logout") == 0) {
+        const char *cookie = "SID=deleted; Path=/; Max-Age=0; HttpOnly";
+        send_302_set_cookie_and_location(client_fd, cookie, "/", keep_alive);
+        return;
+    }
+
+    // Pagina de login (formular simplu HTML) 
+    if (strcmp(path, "/login") == 0) {
+        const char *body =
+            "<!doctype html>"
+            "<html><head><meta charset='utf-8'><title>Login</title></head>"
+            "<body style='font-family: Arial;'>"
+            "<h2>Autentificare</h2>"
+            "<form method='POST' action='/login'>"
+            "Username: <input name='username' /><br/>"
+            "Parola: <input name='password' type='password' /><br/>"
+            "<button type='submit'>Login</button>"
+            "</form>"
+            "<p><a href='/'>Înapoi</a></p>"
+            "</body></html>";
+        send_200(client_fd, "text/html", body, keep_alive);
+        return;
+    }
+    //DENISA end-----------------------------
+
+
     char fullpath[2048] = "default";
     
      // 3.1. Daca e doar "/", inlocuim cu pagina principala / default 
@@ -416,7 +831,10 @@ void handle_get(int client_fd, const http_request_t* req, int keep_alive){
         send_404(client_fd, req->path);
         return;
     }
-    else {
+    else { // DENISA -aici imi zicea ca sa nu mai punem intr-un else si imi zice:
+            //Dacă e HEAD vs GET: handler principal folosește funcția handle_head pentru HEAD,
+            // dar aici rămânem la GET behavior (fisier + body)
+
         // 4.2 Aflam lungimea fisierului
         fseek(file, 0, SEEK_END);
         long content_length = ftell(file);
@@ -473,10 +891,206 @@ void handle_post(int client_fd, const http_request_t* req, int keep_alive) {
 
 
     if (data_start == NULL || req->body_length == 0) {
+        // DENISA - Pentru anumite POST-uri lipsa body este eroare
+        // (pentru login/signup/submit-comment avem nevoie de body)
         fprintf(stderr, "POST fara body sau body gol.\n");
         send_400(client_fd);
         return;
     }
+
+    //DENISA begin------------------------------
+    // ----- Signup: /signup -----
+    // Signup
+    if (strcmp(path, "/signup") == 0) {
+        char user_raw[512] = {0};
+        char pass_raw[512] = {0};
+        get_form_value(data_start, "username", user_raw, sizeof(user_raw));
+        get_form_value(data_start, "password", pass_raw, sizeof(pass_raw));
+
+        char username[512] = {0}, password[512] = {0};
+        urldecode(user_raw, username);
+        urldecode(pass_raw, password);
+
+    if (strlen(username) == 0 || strlen(password) == 0) {
+        send_400(client_fd);
+        return;
+    }
+
+    // reincarcam users din fisier (asiguram consistenta)
+    users_load_from_file("users.txt");
+
+    // verificam daca exista deja user
+    pthread_mutex_lock(&users_mutex);
+    user_t *p = users_head;
+    int exists = 0;
+    while (p) {
+        if (strcmp(p->username, username) == 0) { exists = 1; break; }
+        p = p->next;
+    }
+    pthread_mutex_unlock(&users_mutex);
+
+    if (exists) {
+        const char *body = "{\"error\":\"user_exists\"}";
+        send_200_json(client_fd, body, keep_alive);
+        return;
+    }
+
+    // adaugam user in users.txt (append)
+    FILE *f = fopen("users.txt", "a");
+    if (!f) {
+        perror("fopen users.txt");
+        send_200_json(client_fd, "{\"error\":\"io\"}", keep_alive);
+        return;
+    }
+    // scriem username:password + newline
+    fprintf(f, "%s:%s\n", username, password);
+    fflush(f);
+    // optional: fsync pentru a forța scrierea pe disc
+    fsync(fileno(f));
+    fclose(f);
+
+    // reincarcam lista in memorie
+    users_load_from_file("users.txt");
+
+    // cream sesiune si trimitem cookie+redirect
+    char sid[65];
+    generate_session_id(sid, sizeof(sid));
+    session_add(sid, username);
+    char cookie[256];
+    snprintf(cookie, sizeof(cookie), "SID=%s; Path=/; HttpOnly; Max-Age=%d", sid, SESSION_TTL_SECONDS);
+    send_302_set_cookie_and_location(client_fd, cookie, "/", keep_alive);
+    return;
+}
+
+    // ----- Login: /login -----
+    
+    if (strcmp(path, "/login") == 0) {
+        char user_raw[512] = {0};
+        char pass_raw[512] = {0};
+        get_form_value(data_start, "username", user_raw, sizeof(user_raw));
+        get_form_value(data_start, "password", pass_raw, sizeof(pass_raw));
+
+        char username[512] = {0}, password[512] = {0};
+        urldecode(user_raw, username);
+        urldecode(pass_raw, password);
+
+    if (strlen(username) == 0 || strlen(password) == 0) {
+        // login invalid input
+        const char *body =
+            "<html><body style='font-family:Arial;'>"
+            "<h1>Login esuat</h1>"
+            "<p>Username sau parola incorecte.</p>"
+            "<p><a href='/login'>Incearca din nou</a></p>"
+            "</body></html>";
+        send_200(client_fd, "text/html", body, keep_alive);
+        return;
+    }
+
+    // reincarcam lista de users (in caz ca s-a modificat)
+    users_load_from_file("users.txt");
+
+    if (users_check_credentials(username, password)) {
+        char sid[65];
+        generate_session_id(sid, sizeof(sid));
+        session_add(sid, username);
+        char cookie[256];
+        snprintf(cookie, sizeof(cookie), "SID=%s; Path=/; HttpOnly; Max-Age=%d", sid, SESSION_TTL_SECONDS);
+        send_302_set_cookie_and_location(client_fd, cookie, "/", keep_alive);
+        return;
+    } else {
+        const char *body =
+            "<html><body style='font-family:Arial;'>"
+            "<h1>Login esuat</h1>"
+            "<p>Username sau parola incorecte.</p>"
+            "<p><a href='/login'>Incearca din nou</a></p>"
+            "</body></html>";
+        send_200(client_fd, "text/html", body, keep_alive);
+        return;
+    }
+}
+
+        // Submit comment (protejata) - accepta sesiune sau Basic Auth
+    if (strcmp(path, "/submit-comment") == 0) {
+        char username_saved[128] = {0};
+        int authenticated = 0;
+
+        // 1) verificam SID cookie
+        char sid[128];
+        if (get_cookie_value(req->headers, "SID", sid, sizeof(sid))) {
+            session_t *s = session_find_by_id(sid);
+            if (s) {
+                strncpy(username_saved, s->username, sizeof(username_saved)-1);
+                username_saved[sizeof(username_saved)-1] = '\0';
+                authenticated = 1;
+            } else {
+                // sesiune expirata -> stergem (optional)
+                session_remove_by_id(sid);
+            }
+        }
+
+        // 2) daca nu avem sesiune, incercam Basic Auth
+        if (!authenticated) {
+            char ba_user[128];
+            if (check_basic_auth(req, ba_user, sizeof(ba_user))) {
+                strncpy(username_saved, ba_user, sizeof(username_saved)-1);
+                username_saved[sizeof(username_saved)-1] = '\0';
+                authenticated = 1;
+            }
+        }
+
+        // 3) daca tot nu e autentificat, raspundem:
+        if (!authenticated) {
+            // Daca clientul accepta HTML (probabil browser), redirectam la /login
+            char accept_hdr[256];
+            if (get_header_value(req->headers, "Accept", accept_hdr, sizeof(accept_hdr))
+                && strstr(accept_hdr, "text/html") != NULL) {
+                send_302_location(client_fd, "/login", keep_alive);
+                return;
+            } else {
+                // altfel trimitem 401 + WWW-Authenticate pentru Basic
+                const char *body = "Unauthorized";
+                char header[256];
+                snprintf(header, sizeof(header),
+                    "HTTP/1.1 401 Unauthorized\r\n"
+                    "WWW-Authenticate: Basic realm=\"Restricted\"\r\n"
+                    "Content-Type: text/plain\r\n"
+                    "Content-Length: %zu\r\n"
+                    "Connection: %s\r\n"
+                    "%s"
+                    "\r\n",
+                    strlen(body),
+                    keep_alive ? "keep-alive" : "close",
+                    keep_alive ? "Keep-Alive: timeout=5, max=50\r\n" : ""
+                );
+                send(client_fd, header, strlen(header), 0);
+                send(client_fd, body, strlen(body), 0);
+                log_simple(client_fd, "RESP 401 Unauthorized (submit-comment)");
+                return;
+            }
+        }
+
+        // 4) extragem message din body si salvam folosind username_saved
+        char msg_raw[1200] = {0};
+        sscanf(data_start, "username=%199[^&]&message=%1199[^\r\n]", msg_raw, msg_raw);
+        if (strlen(msg_raw) == 0) sscanf(data_start, "message=%1199[^\r\n]", msg_raw);
+
+        char message_dec[1200] = {0};
+        urldecode(msg_raw, message_dec);
+
+        FILE *f = fopen("blog/comments.txt", "a");
+        if (!f) {
+            perror("Eroare la deschiderea comments.txt");
+            send_200(client_fd, "text/plain", "ERR", keep_alive);
+            return;
+        }
+        fprintf(f, "%s|%s\n", username_saved, message_dec);
+        fclose(f);
+
+        send_200(client_fd, "text/plain", "OK", keep_alive);
+        return;
+    }
+
+    //DENISA end ----------------------------
 
     printf("BODY = [%s]\n", data_start);
 
@@ -509,7 +1123,7 @@ void handle_post(int client_fd, const http_request_t* req, int keep_alive) {
     send_200(client_fd, "text/plain", "OK", keep_alive);
 }
 
-// DENISA --------------------------------
+// DENISA begin--------------------------------
 
 void handle_head(int client_fd, const http_request_t* req, int keep_alive) 
 {
@@ -551,13 +1165,190 @@ void handle_head(int client_fd, const http_request_t* req, int keep_alive)
     fclose(file);
 }
 
-/* ======== NOU: handler pentru OPTIONS - trimite Accept-urile (Allow) ======= */
+/* ======== handler pentru OPTIONS - trimite Accept-urile (Allow) ======= */
 void handle_options(int client_fd, const http_request_t* req, int keep_alive) {
     // Pentru moment trimitem 204 No Content + header Allow
     send_204_allow(client_fd, keep_alive);
 }
 
-// DENISA -------------------------------
+void handle_api_comments(int client_fd, const http_request_t* req, int keep_alive)
+{
+    FILE *f = fopen("blog/comments.txt", "r");
+    if (!f) {
+        // nu exista -> trimitem empty array
+        send_200_json(client_fd, "[]", keep_alive);
+        return;
+    }
+
+    // Construim JSON simplu: [{"username":"...","message":"..."}, ...]
+    // Atentie: nu facem escaping complet aici (pentru proiect educational e OK).
+    size_t cap = 4096;
+    char *json = malloc(cap);
+    if (!json) { fclose(f); send_200_json(client_fd, "[]", keep_alive); return; }
+    size_t len = 0;
+    len += snprintf(json + len, cap - len, "[");
+
+    char line[2048];
+    int first = 1;
+    while (fgets(line, sizeof(line), f)) {
+        char *nl = strchr(line, '\n');
+        if (nl) *nl = '\0';
+        if (strlen(line) == 0) continue;
+        char *sep = strchr(line, '|');
+        if (!sep) continue;
+        *sep = '\0';
+        char *user = line;
+        char *msg = sep + 1;
+
+        // extindem buffer daca e necesar
+        size_t need = strlen(user) + strlen(msg) + 64;
+        if (len + need >= cap) {
+            size_t newcap = cap * 2;
+            char *nb = realloc(json, newcap);
+            if (!nb) break;
+            json = nb; cap = newcap;
+        }
+        if (!first) len += snprintf(json + len, cap - len, ",");
+        // simplu-escape pentru ghilimele si backslash (minimal)
+        // in proiect educational este suficient; pentru productie folosi librarie JSON
+        for (char *p = msg; *p; ++p) if (*p == '"' || *p == '\\') { /* no-op here */ }
+        len += snprintf(json + len, cap - len,
+                        "{\"username\":\"%s\",\"message\":\"%s\"}",
+                        user, msg);
+        first = 0;
+    }
+    len += snprintf(json + len, cap - len, "]");
+    fclose(f);
+
+    send_200_json(client_fd, json, keep_alive);
+    free(json);
+}
+
+// ======== whoami -> 200 JSON {username:...} sau 401 ========
+void handle_whoami(int client_fd, const http_request_t* req, int keep_alive)
+{
+    char sid[128];
+    if (!get_cookie_value(req->headers, "SID", sid, sizeof(sid))) {
+        // 401 Unauthorized (no cookie)
+        const char *body = "{\"error\":\"unauthenticated\"}";
+        char header[256];
+        snprintf(header, sizeof(header),
+            "HTTP/1.1 401 Unauthorized\r\n"
+            "Content-Type: application/json\r\n"
+            "Content-Length: %zu\r\n"
+            "Connection: %s\r\n"
+            "%s"
+            "\r\n",
+            strlen(body),
+            keep_alive ? "keep-alive" : "close",
+            keep_alive ? "Keep-Alive: timeout=5, max=50\r\n" : ""
+        );
+        send(client_fd, header, strlen(header), 0);
+        send(client_fd, body, strlen(body), 0);
+        log_simple(client_fd, "RESP 401 whoami");
+        return;
+    }
+    session_t *s = session_find_by_id(sid);
+    if (!s) {
+        const char *body = "{\"error\":\"unauthenticated\"}";
+        char header[256];
+        snprintf(header, sizeof(header),
+            "HTTP/1.1 401 Unauthorized\r\n"
+            "Content-Type: application/json\r\n"
+            "Content-Length: %zu\r\n"
+            "Connection: %s\r\n"
+            "%s"
+            "\r\n",
+            strlen(body),
+            keep_alive ? "keep-alive" : "close",
+            keep_alive ? "Keep-Alive: timeout=5, max=50\r\n" : ""
+        );
+        send(client_fd, header, strlen(header), 0);
+        send(client_fd, body, strlen(body), 0);
+        log_simple(client_fd, "RESP 401 whoami (no session)");
+        return;
+    }
+
+    char body[256];
+    snprintf(body, sizeof(body), "{\"username\":\"%s\"}", s->username);
+    send_200_json(client_fd, body, keep_alive);
+}
+
+// ======== NOU: POST /signup -> adauga in users.txt si face login (Set-Cookie) ========
+void handle_signup(int client_fd, const http_request_t* req, int keep_alive)
+{
+    const char *data_start = req->body;
+    if (data_start == NULL || req->body_length == 0) {
+        send_400(client_fd);
+        return;
+    }
+
+    char user_raw[200] = {0};
+    char pass_raw[200] = {0};
+    sscanf(data_start, "username=%199[^&]&password=%199s", user_raw, pass_raw);
+
+    char username[200], password[200];
+    urldecode(user_raw, username);
+    urldecode(pass_raw, password);
+
+    if (strlen(username) == 0 || strlen(password) == 0) {
+        const char *body = "{\"error\":\"invalid_input\"}";
+        send_200_json(client_fd, body, keep_alive);
+        return;
+    }
+
+    // incarcam utilizatorii si verificam daca exista
+    users_load_from_file("users.txt");
+    if (users_check_credentials(username, password)) {
+        // user exista cu aceeasi parola -> doar login
+        char sid[65];
+        generate_session_id(sid, sizeof(sid));
+        session_add(sid, username);
+        char cookie[256];
+        snprintf(cookie, sizeof(cookie), "SID=%s; Path=/; HttpOnly; Max-Age=%d", sid, SESSION_TTL_SECONDS);
+        send_302_set_cookie_and_location(client_fd, cookie, "/", keep_alive);
+        return;
+    }
+
+    // verificam daca user deja exista cu alta parola
+    pthread_mutex_lock(&users_mutex);
+    user_t *p = users_head;
+    int exists = 0;
+    while (p) {
+        if (strcmp(p->username, username) == 0) { exists = 1; break; }
+        p = p->next;
+    }
+    pthread_mutex_unlock(&users_mutex);
+
+    if (exists) {
+        // user deja exista, dar parola diferita -> eroare
+        const char *body = "{\"error\":\"user_exists\"}";
+        send_200_json(client_fd, body, keep_alive);
+        return;
+    }
+
+    // adaugam user in users.txt (append)
+    FILE *f = fopen("users.txt", "a");
+    if (!f) {
+        perror("fopen users.txt");
+        send_200_json(client_fd, "{\"error\":\"io\"}", keep_alive);
+        return;
+    }
+    fprintf(f, "%s:%s\n", username, password);
+    fclose(f);
+
+    // reincarcam users si creem sesiune
+    users_load_from_file("users.txt");
+    char sid[65];
+    generate_session_id(sid, sizeof(sid));
+    session_add(sid, username);
+    char cookie[256];
+    snprintf(cookie, sizeof(cookie), "SID=%s; Path=/; HttpOnly; Max-Age=%d", sid, SESSION_TTL_SECONDS);
+    send_302_set_cookie_and_location(client_fd, cookie, "/", keep_alive);
+}
+
+
+// DENISA end-------------------------------
 
 
 
@@ -860,6 +1651,14 @@ void* thread_function(void *arg){
 }
 
 int main(){
+
+    // DENISA -----------
+    // seed pentru fallback gen SID
+    srand((unsigned int)time(NULL));
+
+    // Incarcam utilizatorii din fisier users.txt (daca exista)
+    users_load_from_file("users.txt");
+    // DENISA end------------
 
     // Deschidem fisierul de log
     log_file = fopen("server.log", "a");
