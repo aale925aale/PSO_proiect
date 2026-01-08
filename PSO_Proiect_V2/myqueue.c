@@ -144,6 +144,14 @@ int queue_is_empty(void) {
 }
 
 
+const char* priority_to_string(priority_t p) {
+    switch (p) {
+        case PRIORITY_HIGH:   return "HIGH";
+        case PRIORITY_MEDIUM: return "MEDIUM";
+        case PRIORITY_LOW:    return "LOW";
+    }
+    return "UNKNOWN";
+}
 
 
 

@@ -8,14 +8,7 @@ typedef enum {
     PRIORITY_HIGH = 2
 } priority_t;
 
-const char* priority_to_string(priority_t p) {
-    switch (p) {
-        case PRIORITY_HIGH:   return "HIGH";
-        case PRIORITY_MEDIUM: return "MEDIUM";
-        case PRIORITY_LOW:    return "LOW";
-    }
-    return "UNKNOWN";
-}
+const char* priority_to_string(priority_t p);
 
 // Nodul din coada
 typedef struct node {
